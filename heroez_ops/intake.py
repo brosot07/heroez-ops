@@ -54,6 +54,7 @@ EN_TEXTS = {
     "handover_offhours": "Our admin will continue the discussion during the next working hours 🙏",
     "nano_handover": "For nano/micro KOL needs we have dedicated packages; our supervisor will propose one 🙏",
     "ask_company": "Could you tell us your brand/agency name? We'll send detailed rates after that 🙏",
+    "off_topic": "Sorry, this number is only for KOL and campaign collaborations with Heroez. Anything we can help with on that? 🙏",
     "talent_prompt": "Hi! Please send your handle (IG/TikTok/YouTube), main platform and follower count 🙏",
     "talent_done": "Thank you! Our talent team will contact you 🙏",
     "other_prompt": "Sure, please tell us briefly what you need. Our team will reply as soon as possible 🙏",
@@ -109,6 +110,10 @@ class Intake:
                             (now - self.cfg.intake_timeout_minutes * 60,))
         for r in rows:
             data = json.loads(r["data"])
+            if data.get("redirected") and len(data.get("texts", [])) <= 1:
+                self._set(r["wa_id"], status="spam", outcome="di luar topik (tidak melanjutkan)")
+                self.engine.mark_spam(r["wa_id"], "di luar topik", now)
+                continue
             if data.get("maybe_spam") and len(data.get("texts", [])) <= 1:
                 # Looked like spam, got the menu, never answered: treat as spam (daily card, rescue button).
                 self._set(r["wa_id"], status="spam", outcome=data.get("spam_summary") or "diduga spam (tidak merespons menu)")
@@ -231,7 +236,7 @@ class Intake:
         data = json.loads(row["data"])
         u = None
         if self.ai:
-            got = self.ai.understand(data.get("texts", []) or [ev.text])
+            got = self.ai.understand(data.get("texts", []) or [ev.text], refuse_topics=self.kb.info("refuse_topics"))
             if got:
                 u = Understanding(**data["u"]).merge(got) if data.get("u") else got
         if u is None:                              # AI off or failed: simple button menu
@@ -268,6 +273,17 @@ class Intake:
             self._set(wa, data=data, step="who")
             text = self._t("greeting", lang)
             self._send(self.sender.buttons, wa, text, WHO_EN if lang == "en" else WHO, body=text)
+            return
+        if u.kind == "off_topic":
+            # Not about the business: one fixed redirect, then silence (listed on the daily card if it goes on).
+            if data.get("redirected"):
+                self._set(wa, status="spam", outcome="di luar topik (sudah diarahkan sekali)")
+                self.engine.mark_spam(wa, u.summary_id or "di luar topik", self.now)
+                return
+            data["redirected"] = True
+            self._set(wa, data=data, step="new")
+            self._text(wa, self._t("off_topic", lang))
+            self.store.audit("bot", "off_topic_redirect", wa, {"summary": u.summary_id})
             return
         if u.kind == "unclear":
             if asked >= MAX_QUESTIONS:

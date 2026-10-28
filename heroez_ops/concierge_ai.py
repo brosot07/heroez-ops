@@ -21,7 +21,7 @@ PROMPT = (Path(__file__).resolve().parent / "prompts" / "concierge_v1.md").read_
 SCHEMA = {
     "type": "object",
     "properties": {
-        "kind": {"type": "string", "enum": ["brand", "talent", "spam", "other", "unclear"]},
+        "kind": {"type": "string", "enum": ["brand", "talent", "spam", "other", "off_topic", "unclear"]},
         "lang": {"type": "string", "enum": ["id", "en"]},
         "brand_name": {"type": "string"},
         "campaign": {"type": "string"},
@@ -66,8 +66,8 @@ class Understanding:
             elif k == "platforms":
                 out.platforms = list(dict.fromkeys(self.platforms + v))
             elif k == "kind":
-                # A clearer later message may overrule an early "unclear", "spam" or "other" verdict.
-                out.kind = v if (v != "unclear" and self.kind in ("unclear", "", "spam", "other")) else self.kind
+                # A clearer later message may overrule an early "unclear", "spam", "other" or "off_topic" verdict.
+                out.kind = v if (v != "unclear" and self.kind in ("unclear", "", "spam", "other", "off_topic")) else self.kind
             elif k in ("needs_human", "asks_specific_time"):
                 setattr(out, k, getattr(self, k) or v)
             elif v not in ("", 0, "unknown", None):
@@ -90,12 +90,13 @@ class ConciergeAI:
             client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=2)
         self.client, self.store, self.tz, self.model, self.daily_cap = client, store, tz, model, daily_cap
 
-    def understand(self, messages: list[str]) -> Understanding | None:
+    def understand(self, messages: list[str], refuse_topics: str = "") -> Understanding | None:
         import anthropic
         if over_daily_cap(self.store, self.daily_cap):
             return None
         today = dt.datetime.now(self.tz).date()
         chat = "\n".join(f"KLIEN: {redact(m)[:1500]}" for m in messages[-6:])
+        extra = f"\n\nTopik tambahan yang ditolak (off_topic): {refuse_topics.strip()}" if refuse_topics.strip() else ""
         try:
             resp = self.client.messages.create(
                 model=self.model, max_tokens=600,
@@ -103,7 +104,7 @@ class ConciergeAI:
                 output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
                 cache_control={"type": "ephemeral"},
                 system=PROMPT,
-                messages=[{"role": "user", "content": f"Hari ini: {today.isoformat()} ({today.strftime('%A')}).\n\n<pesan>\n{chat}\n</pesan>"}],
+                messages=[{"role": "user", "content": f"Hari ini: {today.isoformat()} ({today.strftime('%A')}).{extra}\n\n<pesan>\n{chat}\n</pesan>"}],
             )
         except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
             log.warning("concierge AI failed: %s", type(e).__name__)

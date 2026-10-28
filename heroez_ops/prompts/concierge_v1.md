@@ -6,9 +6,13 @@ kind:
 - brand: a brand, agency or business asking about campaigns, KOLs, rates, availability or collaboration
 - talent: an influencer/creator wanting to join Heroez or asking as a talent
 - spam: promotions, chain messages, scams, obvious wrong numbers, bulk marketing, crypto/loans/gambling
-- other: anything else that a person should read (vendors, job seekers, press, partnerships, personal)
+- other: anything else about Heroez that a person should read (vendors, job seekers, press, partnerships)
+- off_topic: not about Heroez's business at all: jokes, politics, religion, personal chat, tech support,
+  homework, "write me a poem", medical/legal/financial advice, opinions about other agencies or brands,
+  questions about a talent's private life, or any topic listed under "Topik tambahan yang ditolak"
 - unclear: a bare greeting ("halo", "permisi", "p") or too little to tell
-When in doubt between spam and anything else, do NOT choose spam.
+When in doubt between spam and anything else, do NOT choose spam. When in doubt between off_topic and a
+business request, choose the business request.
 
 For brands, extract what is stated (leave empty when not stated, never guess):
 - brand_name: the brand/company/agency name, ONLY if one is actually stated ("kami dari Glowskin",

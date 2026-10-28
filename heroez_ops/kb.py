@@ -28,6 +28,7 @@ DEFAULT_TEXTS = {
     "handover_offhours": "Admin kami akan melanjutkan diskusinya pada jam kerja berikutnya ya kak 🙏",
     "nano_handover": "Untuk kebutuhan nano/micro KOL, kami punya paket khusus. Supervisor kami akan mengusulkan ya kak 🙏",
     "ask_company": "Boleh info nama brand/agency-nya kak? Rate detail kami kirim setelah itu 🙏",
+    "off_topic": "Maaf kak, nomor ini khusus untuk kerja sama KOL dan campaign dengan Heroez. Ada yang bisa kami bantu soal itu? 🙏",
     "talent_prompt": "Halo kak! Boleh kirim handle (IG/TikTok/YouTube), platform utama, dan jumlah followers-nya? 🙏",
     "talent_done": "Terima kasih kak! Tim talent kami akan menghubungi kakak 🙏",
     "other_prompt": "Siap kak, boleh tulis singkat keperluannya? Tim kami akan membalas secepatnya 🙏",
@@ -47,6 +48,7 @@ TEXT_LABELS = {
     "handover_offhours": "Penutup di luar jam kerja",
     "nano_handover": "Brand: minta nano/micro KOL (diteruskan ke supervisor)",
     "ask_company": "Brand: minta nama brand/agency sebelum kirim rate detail",
+    "off_topic": "Di luar topik: pengalihan (dikirim sekali, lalu diam)",
     "talent_prompt": "Talent/KOL: minta data", "talent_done": "Talent/KOL: penutup",
     "other_prompt": "Lainnya: minta keperluan", "other_done": "Lainnya: penutup",
 }
@@ -56,6 +58,7 @@ INFO_SECTIONS = {
     "payment_terms": "Ketentuan pembayaran",
     "company": "Tentang Heroez (layanan, platform, kategori talent)",
     "tone": "Gaya bahasa (sapaan kak/bang, emoji, formalitas)",
+    "refuse_topics": "Topik yang harus ditolak bot & saran AI (satu per baris, mis. “talent yang sudah keluar”, “gosip”)",
 }
 
 CATEGORIES = [("beauty", "Beauty & skincare"), ("fnb", "F&B"), ("gaming", "Gaming"), ("fashion", "Fashion"),
@@ -115,6 +118,8 @@ class KB:
         """Everything the AI may use when drafting a reply."""
         parts = []
         for key, label in INFO_SECTIONS.items():
+            if key == "refuse_topics":
+                continue                        # goes to the prompts as a rule, not as knowledge
             if self.info(key).strip():
                 parts.append(f"## {label}\n{self.info(key).strip()}")
         faq = self.faqs()

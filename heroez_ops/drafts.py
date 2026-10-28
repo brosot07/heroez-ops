@@ -61,8 +61,9 @@ class Drafter:
     def _call(self, transcript: str) -> dict | None:
         import anthropic
         from .talents import context_for_ai as talent_context
-        kb_text = "\n\n".join(x for x in (self.kb.context_for_ai(), talent_context(self.store, dt.datetime.now(self.tz).date()))
-                              if x) or "(Knowledge base masih kosong.)"
+        refuse = self.kb.info("refuse_topics").strip()
+        kb_text = "\n\n".join(x for x in (self.kb.context_for_ai(), talent_context(self.store, dt.datetime.now(self.tz).date()),
+                                          f"## Topik yang ditolak\n{refuse}" if refuse else "") if x) or "(Knowledge base masih kosong.)"
         try:
             resp = self.client.beta.messages.create(
                 model=self.model,

@@ -35,7 +35,7 @@ class FakeAI:
     def __init__(self, answers):
         self.answers, self.calls = answers, []
 
-    def understand(self, texts):
+    def understand(self, texts, refuse_topics=""):
         self.calls.append(list(texts))
         return self.answers.get(texts[-1], Understanding(kind="unclear"))
 
@@ -102,7 +102,7 @@ def test_vague_brand_is_asked_then_asked_for_dates_then_answered(bot):
         "Halo kak\nKami brand kopi, mau tanya Raka bisa?\nAwal Desember, 1-5 Des": Understanding(
             kind="brand", date_start="2026-12-01", date_end="2026-12-05", platforms=["tiktok"]),
     })
-    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: f.answers.get("\n".join(texts), Understanding(kind="unclear"))
+    svc.intake.ai.understand = lambda texts, refuse_topics="", f=svc.intake.ai: f.answers.get("\n".join(texts), Understanding(kind="unclear"))
     svc.process_payload(fixtures.inbound("628222", "Halo kak", ts(T0)))
     assert "sebagai apa" in wire.texts()[-1]                              # unclear -> who-are-you buttons
     svc.process_payload(fixtures.inbound("628222", "Kami brand kopi, mau tanya Raka bisa?", ts(T0) + 60))
@@ -156,7 +156,7 @@ def test_maybe_spam_gets_menu_and_second_message_rescues(bot):
     svc.process_payload(fixtures.inbound("628445", msg, ts(T0)))
     assert "sebagai apa" in wire.texts()[-1]                                # not sure: the menu, not silence
     assert svc.intake.row("628445")["status"] == "active"
-    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
+    svc.intake.ai.understand = lambda texts, refuse_topics="", f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
     svc.process_payload(fixtures.inbound("628445", "Kami brand kopi, mau tanya KOL F&B", ts(T0) + 60))
     assert svc.intake.row("628445")["status"] == "done"                     # a real person: handled normally
     assert conv(svc, "628445")["state"] == AWAITING_US
@@ -177,7 +177,7 @@ def test_sure_spam_is_silent_and_second_spam_message_stays_spam(bot):
                         "Promo bunga 0% daftar sekarang": Understanding(kind="spam", summary_id="pinjol")})
     svc.process_payload(fixtures.inbound("628447", msg, ts(T0)))
     assert wire.sent == [] and svc.intake.row("628447")["status"] == "spam"
-    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
+    svc.intake.ai.understand = lambda texts, refuse_topics="", f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
     svc.process_payload(fixtures.inbound("628447", "Promo bunga 0% daftar sekarang", ts(T0) + 60))
     assert wire.sent == [] and svc.intake.row("628447")["status"] == "spam"
 
@@ -320,7 +320,7 @@ def test_unidentified_sender_is_asked_for_company_then_gets_mulai_dari(bot):
                                              date_start="2026-11-20", date_end="2026-11-20")})
     svc.process_payload(fixtures.inbound("628511", first, ts(T0)))
     assert "nama brand/agency" in wire.texts()[-1]                     # asked who they are first
-    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: Understanding(kind="brand", talents=["Dewi Lestari"],
+    svc.intake.ai.understand = lambda texts, refuse_topics="", f=svc.intake.ai: Understanding(kind="brand", talents=["Dewi Lestari"],
                                                                             platforms=["instagram"], date_start="2026-11-20",
                                                                             date_end="2026-11-20")
     svc.process_payload(fixtures.inbound("628511", "cuma mau tahu aja", ts(T0) + 60))     # still no company
