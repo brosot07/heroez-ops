@@ -38,7 +38,18 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r packaging/windows/requirements-build.txt pytest==8.4.1
-      - run: python -m pytest -q
+      - name: Tests
+        shell: pwsh
+        run: |
+          python -m pytest -q -rf 2>&1 | Tee-Object -FilePath pytest.txt
+          if ($LASTEXITCODE -ne 0) {
+            # Surface the failures as annotations (readable through the API when the raw log is not).
+            $lines = Get-Content pytest.txt
+            $sel = @($lines | Where-Object { $_ -match '^(FAILED|ERROR) ' } | Select-Object -First 8)
+            $sel += @($lines | Where-Object { $_ -match '^E ' } | Select-Object -First 2)
+            foreach ($l in $sel) { Write-Output "::error::$l" }
+            exit 1
+          }
 
   build:
     needs: test
