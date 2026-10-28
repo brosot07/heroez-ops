@@ -64,7 +64,20 @@ Tombol ✅ juga membantu sistem belajar. Pakai dengan jujur. 🙏
 - **Grup tetap jalan**, tapi sistem tidak membaca grup. Notifikasi hanya untuk chat pribadi.
 - Buka aplikasi WhatsApp Business di HP minimal sekali tiap 2 minggu (biasanya otomatis karena dipakai tiap hari).
 
-## 6. Kalau bot diam / error
+## 6. Link di pesan klien
+
+Sistem **tidak pernah membuka** link dari pesan klien. Di notifikasi, link ditulis seperti `hxxps://bit[.]ly/abc`
+supaya tidak terbuka tanpa sengaja. Kalau ada tanda **⚠️ Link mencurigakan**: jangan dibuka, jangan isi data apa pun,
+dan laporkan ke supervisor. Link yang tidak dikenal (🔗) hanya dibuka kalau kamu yakin siapa pengirimnya.
+Ingat: Meta/WhatsApp tidak pernah minta verifikasi akun lewat link di chat.
+
+## 7. Halaman web (Antrian & Kontrak)
+
+Buka `https://ops.heroez.id/antrian` dari laptop: masuk dengan kode sekali pakai yang dikirim ke email kantor kamu
+(login diminta lagi setiap hari). Halaman **Antrian** menampilkan chat yang menunggu balasan kamu, dengan tombol
+yang sama seperti di Telegram. Balasnya tetap lewat WhatsApp Web / HP.
+
+## 8. Kalau bot diam / error
 
 Tetap kerja seperti biasa di WhatsApp. Tidak ada yang rusak di WhatsApp kalau sistem mati.
 Manajemen otomatis dapat peringatan kalau sistem mati lebih dari 10 menit.

@@ -26,7 +26,8 @@ def keys(monkeypatch):
 
 
 def token(key, **over):
-    claims = {"email": "Rina@Heroez.id", "aud": AUD, "iss": f"https://{TEAM}", "exp": int(time.time()) + 600, **over}
+    claims = {"email": "Rina@Heroez.id", "aud": AUD, "iss": f"https://{TEAM}", "exp": int(time.time()) + 600,
+              "iat": int(time.time()), **over}
     return jwt.encode(claims, key, algorithm="RS256")
 
 
@@ -58,3 +59,9 @@ def test_unknown_email_refused(cfg, keys):
     with pytest.raises(HTTPException) as ex:
         remote_user(req, cfg, v)
     assert ex.value.status_code == 403
+
+
+def test_old_login_rejected(keys):
+    v, private, _ = keys
+    assert v.email(token(private, iat=int(time.time()) - 13 * 3600)) is None
+    assert v.email(token(private, iat=int(time.time()) - 60)) == "rina@heroez.id"

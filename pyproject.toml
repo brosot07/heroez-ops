@@ -1,6 +1,6 @@
 [project]
 name = "heroez-ops"
-version = "0.6.0"
+version = "0.7.0"
 description = "Listen-only WhatsApp inbox monitor that reminds Heroez admins about unreplied chats via Telegram"
 requires-python = ">=3.11"
 dependencies = [

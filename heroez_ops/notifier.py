@@ -17,6 +17,8 @@ from .config import Config
 from .db import Store
 from .escalation import Escalator
 from .drafts import parse_draft
+from .links import alert_line as link_alert
+from .links import defang
 from .phone import display
 from .textrules import redact  # noqa: F401  (re-exported for callers)
 from .states import AWAITING_US, POSSIBLY_REPLIED
@@ -137,7 +139,7 @@ class Notifier:
         c = self.store.one("SELECT * FROM conversations WHERE wa_id=?", (wa_id,))
         ct = self.store.one("SELECT * FROM contacts WHERE wa_id=?", (wa_id,))
         last = self.store.one(
-            "SELECT type, text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (wa_id,)
+            "SELECT id, type, text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (wa_id,)
         )
         name = html.escape((ct["name"] if ct and ct["name"] else "Tanpa nama"))
         kind = KIND_LABEL.get(ct["kind"] if ct else "new", "Kontak")
@@ -151,22 +153,23 @@ class Notifier:
         snippet = ""
         if last:
             body = last["text"] or f"[{last['type']}]"
-            body = redact(body.replace("\n", " "))
+            body = defang(redact(body.replace("\n", " ")))
             snippet = "💬 “" + html.escape(body[:90] + ("…" if len(body) > 90 else "")) + "”"
         who = self.cfg.admin(c["assignee"]).name if c and c["assignee"] and self.cfg.admin(c["assignee"]) else "-"
         head = f"{STEP_ICON.get(step, '🟠')} <b>{name}</b> ({display(wa_id)}) · {kind}{prio}"
         if step:
             head += f"\n{STEP_LABEL[step]}"
-        ai_line = f"🤖 {html.escape(c['ai_summary'])}" if c and c["ai_summary"] and not c["ai_pending"] else ""
+        ai_line = f"🤖 {html.escape(defang(c['ai_summary']))}" if c and c["ai_summary"] and not c["ai_pending"] else ""
         draft_line = ""
         if c and c["draft_text"] and self._draft_current(c):
             reply, missing, can = parse_draft(c)
             if can and reply:
-                draft_line = f"💡 <b>Saran balasan</b> (salin ke WhatsApp jika cocok):\n<i>{html.escape(reply)}</i>"
+                draft_line = f"💡 <b>Saran balasan</b> (salin ke WhatsApp jika cocok):\n<i>{html.escape(defang(reply))}</i>"
             elif missing:
                 draft_line = f"💡 AI belum bisa menjawab: {html.escape(missing)}" + (
                     f"\n<i>{html.escape(reply)}</i>" if reply else "")
-        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet, draft_line,
+        link_line = html.escape(link_alert(self.store, last["id"])) if last else ""
+        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet, link_line, draft_line,
                  f'<a href="https://wa.me/{wa_id}">Buka chat</a>']
         return "\n".join(p for p in parts if p)
 

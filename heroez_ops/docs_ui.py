@@ -65,8 +65,9 @@ class ContractsUI:
 
     def router(self, local: bool) -> APIRouter:
         r = APIRouter()
-        nav = ([("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan"), ("Pengaturan", "/")] if local
-               else [("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan")])
+        nav = ([("Antrian", "/antrian"), ("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan"),
+                ("Pengaturan", "/")] if local
+               else [("Antrian", "/antrian"), ("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan")])
 
         def who(request: Request) -> User:
             return OWNER if local else remote_user(request, self.cfg(), self.verifier())
@@ -78,10 +79,35 @@ class ContractsUI:
             return f
 
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
-            return HTMLResponse(page(title, body, nav, active, f"{user.name}", message, ok))
+            return HTMLResponse(page(title, body, nav, active, user.name, message, ok, logout=local))
 
         from . import kb_ui
         kb_ui.add_routes(r, self, who, form, show)
+
+        # -- queue ----------------------------------------------------------
+        @r.get("/antrian", response_class=HTMLResponse)
+        def queue(request: Request, semua: int = 0, msg: str = ""):
+            user = who(request)
+            return show("Antrian", self.queue_page(user, bool(semua)), user, "/antrian", msg)
+
+        @r.post("/antrian/aksi")
+        async def queue_action(request: Request):
+            user = who(request)
+            f = await form(request)
+            wa_id, action = str(f.get("wa", "")), str(f.get("aksi", ""))
+            if not self.store.one("SELECT 1 FROM conversations WHERE wa_id=?", (wa_id,)):
+                raise HTTPException(404)
+            engine = self._engine()
+            at = int(time.time())
+            if action == "ambil" and user.role == "admin":
+                engine.claim(wa_id, user.key, at)
+            elif action == "dibalas":
+                engine.mark_replied(wa_id, user.key, at)
+            elif action == "tunda":
+                engine.snooze(wa_id, user.key, at)
+            else:
+                raise HTTPException(400)
+            return RedirectResponse(f"/antrian?semua={int(bool(f.get('semua')))}", status_code=303)
 
         # -- contracts ------------------------------------------------------
         @r.get("/kontrak", response_class=HTMLResponse)
@@ -263,6 +289,55 @@ class ContractsUI:
                             headers={"Content-Disposition": f'attachment; filename="{slug(t["name"])}-asli.docx"'})
 
         return r
+
+    # -- queue ----------------------------------------------------------------------
+    def _engine(self):
+        from .states import Engine
+        return Engine(self.cfg(), self.store)
+
+    def queue_page(self, user: User, everything: bool) -> str:
+        from .bizhours import BusinessClock
+        from .links import alert_line, defang
+        from .notifier import human_duration
+        from .phone import display
+        mine_only = user.role == "admin" and not everything
+        sql = ("SELECT c.*, ct.name, ct.kind FROM conversations c JOIN contacts ct USING(wa_id) WHERE c.state='AWAITING_US' "
+               "AND c.wa_id NOT IN (SELECT wa_id FROM intake WHERE status='active')")
+        params: tuple = ()
+        if mine_only:
+            sql += " AND c.assignee=?"
+            params = (user.key,)
+        rows = self.store.q(sql + " ORDER BY c.waiting_since", params)
+        clock = BusinessClock(self.cfg())
+        now = dt.datetime.now(dt.timezone.utc)
+        kinds = {"talent": "Talent", "existing_client": "Klien lama", "new": "Kontak baru"}
+        items = ""
+        for c in rows:
+            since = dt.datetime.fromtimestamp(c["waiting_since"], dt.timezone.utc)
+            last = self.store.one("SELECT id, text, type FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1",
+                                  (c["wa_id"],))
+            snippet = defang((last["text"] or f"[{last['type']}]")[:160]) if last else ""
+            warn = alert_line(self.store, last["id"]) if last else ""
+            pic = self.cfg().admin(c["assignee"]).name if c["assignee"] and self.cfg().admin(c["assignee"]) else "-"
+            btn = lambda a, label: (f'<form method="post" action="/antrian/aksi" style="display:inline">'  # noqa: E731
+                                    f'<input type="hidden" name="csrf" value="{self.csrf}"><input type="hidden" name="wa" value="{e(c["wa_id"])}">'
+                                    f'<input type="hidden" name="aksi" value="{a}"><input type="hidden" name="semua" value="{int(everything)}">'
+                                    f'<button class="secondary" type="submit">{label}</button></form> ')
+            actions = (btn("ambil", "✋ Saya ambil") if user.role == "admin" else "") + btn("dibalas", "✅ Sudah dibalas") + btn("tunda", "⏰ Tunda 1 jam")
+            items += (f'<div class="card"><b>{e(c["name"] or display(c["wa_id"]))}</b> ({e(display(c["wa_id"]))}) · '
+                      f'{e(kinds.get(c["kind"], ""))}{" · " + e(c["priority"]) if c["priority"] else ""}<br>'
+                      f'⏱ {human_duration((now - since).total_seconds() / 60)} '
+                      f'({human_duration(clock.business_minutes_between(since, now))} jam notifikasi) · PIC: {e(pic)}<br>'
+                      f'{"🤖 " + e(defang(c["ai_summary"])) + "<br>" if c["ai_summary"] else ""}'
+                      f'💬 “{e(snippet)}”<br>{("<b>" + e(warn) + "</b><br>") if warn else ""}'
+                      f'<a class="btn" href="https://wa.me/{e(c["wa_id"])}" target="_blank" rel="noopener">Buka chat</a> {actions}</div>')
+        toggle = ""
+        if user.role == "admin":
+            toggle = ('<a href="/antrian?semua=1">Lihat semua</a>' if mine_only else '<a href="/antrian">Hanya punya saya</a>')
+        title = "Antrian saya" if mine_only else "Semua chat yang menunggu"
+        empty = '<div class="card">🟢 Tidak ada chat yang menunggu balasan.</div>'
+        return (f'<meta http-equiv="refresh" content="120"><h1>{title} ({len(rows)})</h1><p class="muted">Terlama di atas. '
+                f'Balas dari WhatsApp Web atau HP; halaman ini memuat ulang tiap 2 menit. {toggle}</p>{items or empty}')
 
     # -- helpers ------------------------------------------------------------------
     def _require_manager(self, user: User) -> None:

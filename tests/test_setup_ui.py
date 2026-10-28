@@ -43,10 +43,17 @@ def test_form_round_trip(ui, tmp_path):
     assert len(saved["META_VERIFY_TOKEN"]) > 20          # generated on first save
 
 
+def logged_in(ui) -> TestClient:
+    c = TestClient(ui.create_app())
+    r = c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    assert r.status_code == 200
+    return c
+
+
 def test_invalid_config_is_not_saved(ui, tmp_path):
     before = (tmp_path / "config" / "config.yaml").read_text()
     bad = dict(FORM, start="21:00", end="09:00")
-    c = TestClient(ui.create_app())
+    c = logged_in(ui)
     r = c.post("/save", data={**bad, "csrf": ui.csrf})
     assert "Belum tersimpan" in r.text
     assert (tmp_path / "config" / "config.yaml").read_text() == before
@@ -54,7 +61,7 @@ def test_invalid_config_is_not_saved(ui, tmp_path):
 
 
 def test_page_needs_csrf_and_local_host(ui):
-    c = TestClient(ui.create_app())
+    c = logged_in(ui)
     assert c.get("/").status_code == 200
     assert c.get("/", headers={"host": "attacker.example"}).status_code == 403
     assert c.post("/save", data=FORM).status_code == 403
@@ -72,3 +79,47 @@ def test_bot_switches_and_meta_token(ui, tmp_path):
     assert cfg.intake_enabled and not cfg.faq_auto_send and not cfg.drafts_enabled
     assert cfg.sla_text == "30 menit" and cfg.monthly_send_budget == 800 and cfg.phone_number_id == "12345678"
     assert secretstore.load(tmp_path / "secrets.bin")["META_ACCESS_TOKEN"] == "EAAG-secret"
+
+
+def test_password_asked_every_time(ui, tmp_path):
+    c = TestClient(ui.create_app())
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login")
+    assert "Buat password pemilik" in c.get("/login").text
+    assert "minimal 8" in c.post("/login", data={"csrf": ui.csrf, "password": "pendek", "password2": "pendek"}).text
+    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    assert c.get("/").status_code == 200
+    stored = (tmp_path / "config" / "owner.json").read_text()
+    assert "rahasia" not in stored and "pbkdf2" in stored                      # only a hash is kept
+    cookie = c.cookies.get("hz_owner")
+    assert cookie
+    # A new browser (no cookie) must log in again; wrong password refused.
+    c2 = TestClient(ui.create_app())
+    assert c2.get("/", follow_redirects=False).status_code == 303
+    assert c2.post("/login", data={"csrf": ui.csrf, "password": "salah-salah"}).status_code == 401
+    c.get("/logout")
+    assert c.get("/", follow_redirects=False).status_code == 303
+
+
+def test_lockout_and_reset_flag(ui, tmp_path):
+    c = TestClient(ui.create_app())
+    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    c2 = TestClient(ui.create_app())
+    for _ in range(5):
+        c2.post("/login", data={"csrf": ui.csrf, "password": "tebak-tebak"})
+    r = c2.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123"})
+    assert r.status_code == 429                                                 # locked even with the right password
+    (tmp_path / "reset_password").write_text("")
+    assert ui.owner.apply_reset_flag() and not ui.owner.has_password()
+    assert c.get("/", follow_redirects=False).status_code == 303                 # old sessions gone
+
+
+def test_idle_session_expires(ui):
+    import json
+    import time
+    c = TestClient(ui.create_app())
+    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    key = ui.owner._key(c.cookies.get("hz_owner"))
+    old = int(time.time()) - 31 * 60
+    ui.store.set_kv(key, json.dumps({"created": old, "seen": old}))
+    assert c.get("/", follow_redirects=False).status_code == 303

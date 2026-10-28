@@ -179,6 +179,20 @@ CREATE TABLE IF NOT EXISTS talent_busy (
     start TEXT NOT NULL,
     end TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS link_checks (
+    url_hash TEXT PRIMARY KEY,               -- URLhaus answers, cached a day (the link itself is not stored)
+    verdict TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS message_links (
+    msg_id TEXT NOT NULL,
+    wa_id TEXT NOT NULL,
+    shown TEXT NOT NULL,                     -- defanged form only
+    host TEXT,
+    level TEXT NOT NULL,                     -- ok | unknown | suspicious | malicious
+    reasons TEXT,
+    PRIMARY KEY (msg_id, shown)
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

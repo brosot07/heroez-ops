@@ -20,6 +20,7 @@ from . import calendar_sync
 from .concierge_ai import ConciergeAI
 from .intake import Intake
 from .kb import KB
+from .links import LinkChecker
 from .notifier import Notifier
 from .sources.base import MessageEvent
 from .sources.meta import MetaCoexistenceSource
@@ -53,6 +54,7 @@ class Service:
         self.digest = Digest(cfg, store, self.clock)
         # Phase 2: knowledge base, Cloud API sender (shadow unless live), menu bot, reply drafts.
         self.kb = KB(store)
+        self.links = LinkChecker(store, cfg.urlhaus_auth_key)
         shadow_dir = Path(data_dir) if data_dir else Path("data")
         self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
@@ -93,6 +95,12 @@ class Service:
         events.sort(key=lambda e: e.ts if isinstance(e, MessageEvent) else 0)
         for ev in events:
             self.engine.handle(ev)
+            if (isinstance(ev, MessageEvent) and ev.direction == "in" and ev.source != "history"
+                    and not self.engine.last_was_duplicate and ev.text):
+                try:
+                    self.links.check_message(ev.msg_id, ev.wa_id, ev.text)   # never opens the links
+                except Exception:
+                    log.exception("link check failed")
             if isinstance(ev, MessageEvent) and not self.engine.last_was_duplicate:
                 try:
                     self.intake.on_event(ev)

@@ -42,14 +42,14 @@ class TelegramAlertChannel(AlertChannel):
     def send(self, chat_id, text, buttons=None):
         res = self._call("sendMessage", {
             "chat_id": chat_id, "text": text, "parse_mode": "HTML",
-            "disable_web_page_preview": True, "reply_markup": _markup(buttons),
+            "disable_web_page_preview": True, "link_preview_options": {"is_disabled": True}, "reply_markup": _markup(buttons),
         })
         return res.get("message_id") if isinstance(res, dict) else None
 
     def edit(self, chat_id, message_id, text, buttons=None):
         self._call("editMessageText", {
             "chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
-            "disable_web_page_preview": True, "reply_markup": _markup(buttons),
+            "disable_web_page_preview": True, "link_preview_options": {"is_disabled": True}, "reply_markup": _markup(buttons),
         })
 
     def edit_buttons(self, chat_id, message_id, buttons):

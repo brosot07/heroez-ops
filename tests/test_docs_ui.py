@@ -124,3 +124,19 @@ def test_remote_pages_refuse_without_login(setup):
     c = TestClient(app)
     r = c.get("/kontrak")
     assert r.status_code == 403 and "Login belum diatur" in r.text   # Access not configured: default deny
+
+
+def test_queue_page_and_actions(setup):
+    ui, client = setup
+    from heroez_ops import fixtures
+    from heroez_ops.states import Engine
+    eng = Engine(ui.cfg(), ui.store)
+    for ev in __import__("heroez_ops.sources.meta", fromlist=["x"]).MetaCoexistenceSource("x", "6280000000000").parse(
+            fixtures.inbound("628111", "Kak cek link bit.ly/promo ya", 1_800_000_000, name="Brand A")):
+        eng.handle(ev)
+    page = client.get("/antrian").text
+    assert "Brand A" in page and "bit[.]ly/promo" in page and "bit.ly/promo" not in page
+    r = client.post("/antrian/aksi", data={"csrf": ui.csrf, "wa": "628111", "aksi": "dibalas"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert "Tidak ada chat" in client.get("/antrian").text
+    assert client.post("/antrian/aksi", data={"wa": "628111", "aksi": "dibalas"}).status_code == 403   # csrf required

@@ -162,12 +162,20 @@ class Intake:
         self.store.x(f"UPDATE intake SET {sets} WHERE wa_id=?", (*cols.values(), wa))
 
     def _start(self, ev: MessageEvent, now: int) -> None:
+        bad = self.store.q("SELECT shown, level, reasons FROM message_links WHERE msg_id=? AND level IN ('suspicious','malicious')",
+                           (ev.msg_id,))
         self.store.x("INSERT INTO intake(wa_id,status,step,lang,data,first_msg_ts,started_at,updated_at) VALUES(?,?,?,?,?,?,?,?) "
                      "ON CONFLICT(wa_id) DO UPDATE SET status=excluded.status, step=excluded.step, lang=excluded.lang, "
                      "data=excluded.data, first_msg_ts=excluded.first_msg_ts, started_at=excluded.started_at, "
                      "updated_at=excluded.updated_at, outcome=NULL",
                      (ev.wa_id, "active", "new", "id", json.dumps({"texts": [ev.text[:1500]], "asked": 0}), ev.ts, now, now))
         self.store.audit("bot", "intake_start", ev.wa_id, None, now)
+        if bad:
+            # A first message with a phishing-looking link: never engage; list it with the spam for a human to check.
+            reason = f"link mencurigakan {bad[0]['shown']}"
+            self._set(ev.wa_id, status="spam", outcome=reason)
+            self.engine.mark_spam(ev.wa_id, reason, now)
+            return
         self._understand_and_act(self.row(ev.wa_id), ev)
 
     def _advance(self, row, ev: MessageEvent, now: int) -> None:

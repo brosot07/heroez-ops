@@ -38,6 +38,7 @@ Source: "..\..\dist\HeroezOps\*"; DestDir: "{app}"; Flags: ignoreversion recurse
 Source: "bin\WinSW-x64.exe"; DestDir: "{app}"; DestName: "HeroezOpsService.exe"; Flags: ignoreversion
 Source: "HeroezOpsService.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "bin\cloudflared.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "reset-password.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [INI]
 Filename: "{app}\Pengaturan Heroez Ops.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://127.0.0.1:8788/"
@@ -45,6 +46,7 @@ Filename: "{app}\Pengaturan Heroez Ops.url"; Section: "InternetShortcut"; Key: "
 [Icons]
 Name: "{group}\Heroez Ops - Pengaturan"; Filename: "{app}\Pengaturan Heroez Ops.url"
 Name: "{group}\Heroez Ops - Folder log"; Filename: "{commonappdata}\HeroezOps\logs"
+Name: "{group}\Reset password Heroez Ops"; Filename: "{app}\reset-password.cmd"
 Name: "{autodesktop}\Heroez Ops - Pengaturan"; Filename: "{app}\Pengaturan Heroez Ops.url"
 
 [Run]

@@ -9,6 +9,7 @@ import logging
 from .alerts.base import AlertChannel, Button
 from .config import Config
 from .db import Store
+from .links import defang
 from .notifier import Notifier
 from .phone import display, normalize
 from .states import Engine
@@ -162,9 +163,9 @@ class Bot:
                 self.channel.send(chat_id, "🟢 Tidak ada pesan yang diduga spam dalam 7 hari terakhir.")
             for r in rows:
                 last = self.store.one("SELECT text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (r["wa_id"],))
-                body = html.escape(((last["text"] if last else "") or "")[:200])
+                body = html.escape(defang(((last["text"] if last else "") or "")[:200]))
                 self.channel.send(chat_id, f"🗑️ <b>{html.escape(r['name'] or display(r['wa_id']))}</b> ({display(r['wa_id'])})\n"
-                                           f"AI: {html.escape(r['outcome'] or '')}\n💬 “{body}”",
+                                           f"AI: {html.escape(defang(r['outcome'] or ''))}\n💬 “{body}”",
                                   [[Button("Bukan spam → teruskan ke admin", f"notspam:{r['wa_id']}")]])
         elif cmd == "/cari":
             self.channel.send(chat_id, self.search(arg.strip(), now))

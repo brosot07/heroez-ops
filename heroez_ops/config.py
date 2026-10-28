@@ -85,6 +85,7 @@ class Config:
     contract_number_format: str = "{seq:03d}/HRZ-KTR/{roman_month}/{year}"
     # Phase 2: bot replies through the Cloud API
     meta_access_token: str = ""
+    urlhaus_auth_key: str = ""
     phone_number_id: str = ""
     graph_api_version: str = "v23.0"
     intake_enabled: bool = False
@@ -247,6 +248,7 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         pkp=bool((raw.get("tax") or {}).get("pkp", False)),
         ppn_rate=float((raw.get("tax") or {}).get("ppn_effective_rate", 0.11)),
         meta_access_token=os.environ.get("META_ACCESS_TOKEN", ""),
+        urlhaus_auth_key=os.environ.get("URLHAUS_AUTH_KEY", ""),
         phone_number_id=str(wa.get("phone_number_id", "") or ""),
         graph_api_version=str(wa.get("graph_api_version", "v23.0") or "v23.0"),
         intake_enabled=bool((raw.get("bot") or {}).get("intake_enabled", False)),

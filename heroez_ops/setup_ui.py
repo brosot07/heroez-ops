@@ -18,12 +18,13 @@ from typing import Callable
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import secrets as secretstore
 from .ai import month_cost
 from .alerts.telegram import TelegramAlertChannel
 from .config import ConfigError, load_config
+from .owner_auth import COOKIE, OwnerAuth
 from .ui_common import CSS
 from .db import Store
 
@@ -45,6 +46,8 @@ class SetupUI:
         self.status = status or (lambda: {})
         self.port = port
         self.csrf = pysecrets.token_urlsafe(24)
+        self.owner = OwnerAuth(home, store)
+        self.owner.apply_reset_flag()
 
     # -- data -----------------------------------------------------------
     def raw(self) -> dict:
@@ -139,7 +142,7 @@ class SetupUI:
         new_secrets = dict(old_secrets)
         for field, key in (("telegram_bot_token", "TELEGRAM_BOT_TOKEN"), ("meta_app_secret", "META_APP_SECRET"),
                            ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"), ("anthropic_api_key", "ANTHROPIC_API_KEY"),
-                           ("meta_access_token", "META_ACCESS_TOKEN")):
+                           ("meta_access_token", "META_ACCESS_TOKEN"), ("urlhaus_key", "URLHAUS_AUTH_KEY")):
             if g(field):                      # blank = keep the existing value
                 new_secrets[key] = g(field)
             if form.get(f"clear_{field}"):
@@ -226,7 +229,7 @@ class SetupUI:
 
         return f"""<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heroez Ops Settings</title><style>{CSS}</style></head><body>
-<nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/pengetahuan">Pengetahuan</a><a href="/" class="on">Pengaturan</a></nav><main>
+<nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/pengetahuan">Pengetahuan</a><a href="/" class="on">Pengaturan</a><span class="who"><a href="/logout">Keluar</a></span></nav><main>
 <h1>Heroez Ops: Pengaturan</h1><p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>{msg}
 <div class="card"><h2>Status</h2>
 <p>Mode: <b>{"LIVE (notifikasi dikirim)" if raw.get("mode") == "live" else "SHADOW (hanya dicatat, belum dikirim)"}</b><br>
@@ -301,7 +304,8 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
 <label>Phone number ID <small>(Meta app → WhatsApp → API Setup; untuk bot)</small></label><input type="text" name="phone_number_id" value="{_e((raw.get("whatsapp") or {}).get("phone_number_id", ""))}">
 <label>Meta access token <small>(System user token, permanen · {has("META_ACCESS_TOKEN")})</small></label><input type="password" name="meta_access_token" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">
-<label>Cloudflare Tunnel token <small>· {has("CLOUDFLARE_TUNNEL_TOKEN")}</small></label><input type="password" name="tunnel_token" autocomplete="off"></div>
+<label>Cloudflare Tunnel token <small>· {has("CLOUDFLARE_TUNNEL_TOKEN")}</small></label><input type="password" name="tunnel_token" autocomplete="off">
+<label>URLhaus Auth-Key <small>(opsional, gratis di auth.abuse.ch: cek link berbahaya tanpa membukanya · {has("URLHAUS_AUTH_KEY")})</small></label><input type="password" name="urlhaus_key" autocomplete="off"></div>
 
 <button type="submit">Simpan & mulai ulang</button></form>
 <form method="post" action="/test-telegram" style="margin-top:12px"><input type="hidden" name="csrf" value="{self.csrf}">
@@ -336,7 +340,64 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
             # Blocks DNS rebinding for every page on this local app, including the contract pages.
             if request.headers.get("host", "") not in allowed_hosts:
                 return HTMLResponse("Forbidden", status_code=403)
+            # Password every time: no valid session -> login page (except the login page itself).
+            if request.url.path not in ("/login", "/logout") and not self.owner.valid(request.cookies.get(COOKIE)):
+                from urllib.parse import quote
+                return RedirectResponse(f"/login?next={quote(request.url.path)}", status_code=303)
             return await call_next(request)
+
+        def login_page(message: str = "", nxt: str = "/") -> str:
+            first = not self.owner.has_password()
+            title = "Buat password pemilik" if first else "Masuk"
+            intro = ("Belum ada password. Buat sekarang: password ini diminta setiap kali halaman Heroez Ops dibuka "
+                     "di komputer ini." if first else "Halaman ini hanya untuk pemilik/pengelola komputer server.")
+            extra = '<label>Ulangi password</label><input type="password" name="password2" required minlength="8">' if first else ""
+            msg = f'<div class="msg bad">{_e(message)}</div>' if message else ""
+            return (f'<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" '
+                    f'content="width=device-width,initial-scale=1"><title>Heroez Ops Login</title><style>{CSS}</style></head>'
+                    f'<body><main style="max-width:420px"><h1>Heroez Ops</h1><div class="card"><h2>{title}</h2>'
+                    f'<p class="muted">{intro}</p>{msg}<form method="post" action="/login">'
+                    f'<input type="hidden" name="csrf" value="{self.csrf}"><input type="hidden" name="next" value="{_e(nxt)}">'
+                    f'<label>Password</label><input type="password" name="password" required minlength="8" autofocus>{extra}'
+                    f'<br><br><button type="submit">{title}</button></form></div>'
+                    f'<p class="muted">Lupa password? Administrator Windows: Start menu → “Reset password Heroez Ops”.</p>'
+                    f'</main></body></html>')
+
+        @app.get("/login", response_class=HTMLResponse)
+        def login_get(next: str = "/"):
+            self.owner.apply_reset_flag()
+            return login_page(nxt=next)
+
+        @app.post("/login")
+        async def login_post(request: Request):
+            form = await form_of(request)
+            self.owner.apply_reset_flag()
+            nxt = form.get("next", "/")
+            if not nxt.startswith("/") or nxt.startswith("//"):
+                nxt = "/"
+            pw = form.get("password", "")
+            if not self.owner.has_password():
+                if pw != form.get("password2", ""):
+                    return HTMLResponse(login_page("Kedua password tidak sama.", nxt))
+                try:
+                    self.owner.set_password(pw)
+                except ValueError as ex:
+                    return HTMLResponse(login_page(str(ex), nxt))
+            elif self.owner.locked():
+                return HTMLResponse(login_page("Terlalu banyak percobaan salah. Coba lagi 5 menit lagi.", nxt), status_code=429)
+            elif not self.owner.check_password(pw):
+                return HTMLResponse(login_page("Password salah.", nxt), status_code=401)
+            resp = RedirectResponse(nxt, status_code=303)
+            # No max-age: the cookie ends when the browser closes.
+            resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/")
+            return resp
+
+        @app.get("/logout")
+        def logout(request: Request):
+            self.owner.end(request.cookies.get(COOKIE))
+            resp = RedirectResponse("/login", status_code=303)
+            resp.delete_cookie(COOKIE, path="/")
+            return resp
 
         if extra_router is not None:
             app.include_router(extra_router)

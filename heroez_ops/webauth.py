@@ -1,6 +1,6 @@
 """Who is using the web pages?
 
-* On the host PC (127.0.0.1:8788): the owner, full access, no login.
+* On the host PC (127.0.0.1:8788): the owner, full access, after the owner password (owner_auth.py).
 * From other laptops via the public address: Cloudflare Access does the email login;
   we verify its signed token ourselves (so a missing Access policy never exposes the
   pages) and map the email to an admin or supervisor in the config.
@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
@@ -33,6 +34,8 @@ OWNER = User("", "Pemilik (komputer ini)", "owner", "owner")
 
 
 class AccessVerifier:
+    MAX_AGE_SECONDS = 12 * 3600     # refuse logins older than this even if Cloudflare still accepts them
+
     def __init__(self, team_domain: str, audience: str):
         import jwt
         self.team = team_domain.removeprefix("https://").strip("/")
@@ -44,7 +47,10 @@ class AccessVerifier:
         try:
             key = self.jwks.get_signing_key_from_jwt(token).key
             claims = jwt.decode(token, key, algorithms=["RS256"], audience=self.audience,
-                                issuer=f"https://{self.team}")
+                                issuer=f"https://{self.team}", options={"require": ["exp", "iat", "aud", "iss"]})
+            if time.time() - int(claims["iat"]) > self.MAX_AGE_SECONDS:
+                log.warning("Cloudflare Access token too old; login again")
+                return None
         except Exception as e:  # any invalid/expired/unverifiable token = no access
             log.warning("Cloudflare Access token rejected: %s", type(e).__name__)
             return None

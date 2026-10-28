@@ -13,6 +13,10 @@ they only use Telegram (and WhatsApp Web / the phone app to reply).
 1. Run `HeroezOps-Setup-<version>.exe` (needs administrator rights).
 2. Leave **"Jangan sleep / hibernate saat dicolok"** ticked.
 3. At the end, the settings page opens: <http://127.0.0.1:8788> (also in the Start menu: *Heroez Ops – Pengaturan*).
+4. The first visit asks you to **create the owner password** (at least 8 characters). It is asked every time the
+   pages are opened on this PC: the login ends when the browser closes, after 30 minutes idle, or after 12 hours.
+   Five wrong attempts lock the login for 5 minutes. Forgotten it? Start menu → **Reset password Heroez Ops**
+   (needs a Windows administrator), then open the page and set a new one.
 
 The program starts by itself every time Windows starts, even before anyone logs in.
 
@@ -72,6 +76,14 @@ Follow `SETUP_RUNBOOK.md` for the Meta app and coexistence onboarding. In the Me
 - **Callback URL** and **Verify token**: copy them from the top of our settings page.
 - Subscribe to: `messages`, `smb_message_echoes`, `history`, `smb_app_state_sync`.
 - Paste the Meta **App Secret** into section 6 of our settings page.
+
+## 4b. Links in messages
+The app never opens a link from a WhatsApp message, and neither does the AI. Every link is checked by its address
+(look-alike domains, IP addresses, shorteners, risky endings, downloads, login/OTP bait) and shown defanged
+(`hxxps://bit[.]ly/…`) in Telegram and on the web pages, with a warning when it looks suspicious. A new contact whose
+first message carries a suspicious link gets no bot reply and lands in the spam list. For a malware-database check that
+still never visits the link, create a free account at <https://auth.abuse.ch>, copy the **Auth-Key** and paste it in
+settings section 9 (URLhaus).
 
 ## 5. Health alert if the computer goes off (free)
 Create a free monitor at UptimeRobot (or Healthchecks.io): HTTP check of `https://ops.heroez.id/health` every 5 minutes,
