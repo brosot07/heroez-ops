@@ -67,10 +67,10 @@ def test_single_alert_is_updated_after_resolve(service, channel):
     assert "Sudah dibalas (Rina)" in edit["text"]
 
 
-def test_supervisor_can_resolve_but_not_claim(service, channel):
+def test_supervisor_can_take_a_chat_personally(service, channel):
     setup_chat(service)
     press(service, 2001, "claim:628111")
-    assert service.engine.conversation("628111")["assigned_how"] != "claim"
+    assert service.engine.conversation("628111")["assignee"] == "spv:sari"
     press(service, 2001, "done:628111")
     assert service.engine.conversation("628111")["state"] == AWAITING_THEM
 

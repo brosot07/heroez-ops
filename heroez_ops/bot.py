@@ -27,6 +27,7 @@ HELP = (
     "/bantuan – pesan ini\n\n"
     "Tombol di notifikasi:\n"
     "✋ Saya ambil – chat jadi tanggung jawab kamu\n"
+    "→ Nama admin – (supervisor) tugaskan lead brand baru ke admin itu\n"
     "✅ Sudah dibalas – kalau kamu sudah balas tapi sistem belum tahu\n"
     "⏰ Tunda 1 jam – ingatkan lagi nanti"
 )
@@ -85,7 +86,8 @@ class Bot:
             self.channel.answer_callback(cq.get("id", ""), "Maaf, kamu tidak punya akses.")
             self.store.audit(str(user_id), "denied_callback", None, cq.get("data"))
             return
-        action, _, wa_id = (cq.get("data") or "").partition(":")
+        action, _, rest = (cq.get("data") or "").partition(":")
+        wa_id, _, extra = rest.partition(":")
         at = int(now.timestamp())
         if not self.engine.conversation(wa_id):
             self.channel.answer_callback(cq.get("id", ""), "Chat tidak ditemukan.")
@@ -96,9 +98,24 @@ class Bot:
             else:
                 self.channel.answer_callback(cq["id"], "Sudah ditangani.")
             return
+        if action in ("fb_ok", "fb_no"):
+            if not actor.startswith("spv:"):
+                self.channel.answer_callback(cq["id"], "Penilaian hanya untuk supervisor.")
+                return
+            self.engine.record_alert_feedback(wa_id, action == "fb_ok", actor, at)
+            self.channel.answer_callback(cq["id"], "👍 Dicatat, terima kasih." if action == "fb_ok" else "👎 Dicatat; chat ditutup.")
+            return
+        if action == "assign":
+            if not actor.startswith("spv:") or not self.cfg.admin(extra):
+                self.channel.answer_callback(cq["id"], "Hanya supervisor yang bisa menugaskan.")
+                return
+            self.engine.claim(wa_id, extra, at, by=actor)
+            self.channel.answer_callback(cq["id"], f"→ Ditugaskan ke {self.cfg.person_name(extra)}.")
+            self._update_alert(cq.get("message") or {}, "assign", wa_id, actor, now, extra=extra)
+            return
         if action == "claim":
-            if not self.cfg.admin(actor):
-                self.channel.answer_callback(cq["id"], "Hanya admin yang bisa mengambil chat.")
+            if not (self.cfg.admin(actor) or actor.startswith("spv:")):
+                self.channel.answer_callback(cq["id"], "Hanya admin atau supervisor yang bisa mengambil chat.")
                 return
             self.engine.claim(wa_id, actor, at)
         elif action == "done":
@@ -113,19 +130,20 @@ class Bot:
 
         self._update_alert(cq.get("message") or {}, action, wa_id, actor, now)
 
-    def _update_alert(self, msg: dict, action: str, wa_id: str, actor: str, now: dt.datetime) -> None:
+    def _update_alert(self, msg: dict, action: str, wa_id: str, actor: str, now: dt.datetime, extra: str = "") -> None:
         """Leave a visible trace on the alert so everyone sees who handled it."""
         if not msg.get("message_id"):
             return
         markup = (msg.get("reply_markup") or {}).get("inline_keyboard") or []
         rows = [[Button(b["text"], b["callback_data"]) for b in row] for row in markup]
         chat_id = msg["chat"]["id"]
-        resolved = action in ("done", "nope")
+        resolved = action in ("done", "nope", "assign")
         single = rows and all(b.data.endswith(":" + wa_id) for row in rows for b in row)
         if single:
             who = self._name(actor)
             note = {"claim": f"✋ Diambil {who}", "done": f"🟢 Sudah dibalas ({who})",
-                    "snooze": f"⏰ Ditunda 1 jam ({who})", "nope": f"🟢 Tidak perlu dibalas ({who})"}[action]
+                    "snooze": f"⏰ Ditunda 1 jam ({who})", "nope": f"🟢 Tidak perlu dibalas ({who})",
+                    "assign": f"→ Ditugaskan ke {self.cfg.person_name(extra)} oleh {who}"}[action]
             text = self.notifier.item_lines(wa_id, now) + "\n\n" + html.escape(note)
             self.channel.edit(chat_id, msg["message_id"], text, None if resolved else rows)
         elif resolved:

@@ -27,8 +27,10 @@ def _ts(t: dt.datetime) -> int:
 
 
 class Escalator:
-    def __init__(self, cfg: Config, store: Store, clock: BusinessClock):
+    def __init__(self, cfg: Config, store: Store, clock: BusinessClock, engine=None):
         self.cfg, self.store, self.clock = cfg, store, clock
+        from .states import Engine
+        self.engine = engine or Engine(cfg, store)
 
     def due(self, now: dt.datetime) -> list[Due]:
         e = self.cfg.escalation
@@ -49,9 +51,19 @@ class Escalator:
             all_admins = tuple(f"admin:{a.key}" for a in self.cfg.admins)
             own_spv = tuple(f"spv:{s.key}" for s in self.cfg.supervisors_of(assignee))
             all_spv = tuple(f"spv:{s.key}" for s in self.cfg.supervisors)
-            me = (f"admin:{assignee}",) if assignee else ()
+            me = ((assignee if assignee.startswith("spv:") else f"admin:{assignee}"),) if assignee else ()
 
             steps: list[tuple[str, tuple[str, ...]]] = []
+            if c["triage_since"] and not assignee:
+                # Supervisors pick the admin; after the grace period round-robin takes over.
+                tmin = self.clock.business_minutes_between(dt.datetime.fromtimestamp(c["triage_since"], dt.timezone.utc), now)
+                if tmin >= e.triage_minutes:
+                    self.engine.triage_timeout(c["wa_id"], now_ts)
+                    assignee = (self.store.one("SELECT assignee FROM conversations WHERE wa_id=?", (c["wa_id"],)) or {})["assignee"]
+                    me = (f"admin:{assignee}",) if assignee else ()
+                    own_spv = tuple(f"spv:{s.key}" for s in self.cfg.supervisors_of(assignee))
+                elif "triage" not in fired:
+                    steps.append(("triage", all_spv))
             if real_h >= e.overdue_after_real_hours:
                 steps.append(("overdue", all_admins + own_spv + ("group:admin",)))
             elif real_h >= e.urgent_after_real_hours:

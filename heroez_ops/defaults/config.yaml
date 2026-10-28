@@ -1,7 +1,7 @@
 # Heroez Ops — business rules. All thresholds live here.
 # Times are WIB (Asia/Jakarta). "business minutes" only count inside business hours.
 
-mode: shadow            # shadow = compute + log alerts, send nothing. live = send to Telegram.
+mode: shadow            # shadow = log only · review = alerts to supervisors with 👍/👎 · live = everyone
 
 timezone: Asia/Jakarta
 
@@ -71,6 +71,7 @@ escalation:
   overdue_after_real_hours: 24     # since client's last message, real time
   snooze_minutes: 60
   repeat_every_business_min: 60    # keep reminding the assignee every hour until replied (0 = off)
+  triage_minutes: 30               # supervisor has this long to assign a brand lead before round-robin
 
 alerts:
   min_minutes_between_messages_per_recipient: 60   # at most 1 Telegram message per person per hour

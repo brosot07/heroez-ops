@@ -81,7 +81,7 @@ class SetupUI:
         g = lambda k, d="": (form.get(k) or d).strip()  # noqa: E731
         num = lambda k: int(g(k, "0") or 0) if g(k, "0").lstrip("-").isdigit() else 0  # noqa: E731
 
-        raw["mode"] = "live" if g("mode") == "live" else "shadow"
+        raw["mode"] = g("mode") if g("mode") in ("shadow", "review", "live") else "shadow"
         raw.setdefault("whatsapp", {})["business_number"] = "".join(ch for ch in g("business_number") if ch.isdigit())
         raw.setdefault("server", {})["public_hostname"] = g("public_hostname").removeprefix("https://").strip("/")
 
@@ -233,7 +233,7 @@ class SetupUI:
 <nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/pengetahuan">Pengetahuan</a><a href="/" class="on">Pengaturan</a><span class="who"><a href="/logout">Keluar</a></span></nav><main>
 <h1>Heroez Ops: Pengaturan</h1><p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>{msg}
 <div class="card"><h2>Status</h2>
-<p>Mode: <b>{"LIVE (notifikasi dikirim)" if raw.get("mode") == "live" else "SHADOW (hanya dicatat, belum dikirim)"}</b><br>
+<p>Mode: <b>{ {"live": "LIVE (notifikasi dikirim)", "review": "UJI COBA (notifikasi hanya ke supervisor)"}.get(raw.get("mode"), "SHADOW (hanya dicatat, belum dikirim)") }</b><br>
 Pesan WhatsApp terakhir masuk: <b>{ago(st.get("last_webhook_at", 0))}</b><br>
 Sistem terakhir aktif: <b>{ago(st.get("last_tick_at", 0))}</b><br>
 Tunnel (alamat publik): <b>{_e(st.get("tunnel", "tidak dipakai"))}</b><br>
@@ -243,7 +243,8 @@ AI (Claude): <b>{ai_status}</b></p>
 <form method="post" action="/save"><input type="hidden" name="csrf" value="{self.csrf}">
 <div class="card"><h2>1. Mode</h2>
 <label style="font-weight:400"><input type="radio" name="mode" value="shadow" {"checked" if raw.get("mode") != "live" else ""}> Shadow: hitung dan catat saja (minggu pertama)</label>
-<label style="font-weight:400"><input type="radio" name="mode" value="live" {"checked" if raw.get("mode") == "live" else ""}> Live: kirim notifikasi Telegram</label></div>
+<label style="font-weight:400"><input type="radio" name="mode" value="review" {"checked" if raw.get("mode") == "review" else ""}> Uji coba: notifikasi hanya ke supervisor, dengan tombol 👍/👎 untuk menilai (pesan bot ke klien tetap tidak dikirim)</label>
+<label style="font-weight:400"><input type="radio" name="mode" value="live" {"checked" if raw.get("mode") == "live" else ""}> Live: notifikasi ke semua admin & supervisor; bot aktif sesuai bagian 7</label></div>
 
 <div class="card"><h2>2. Telegram</h2>
 <label>Token bot <small>(dari @BotFather) · {has("TELEGRAM_BOT_TOKEN")} · kosongkan untuk tidak mengubah</small></label>

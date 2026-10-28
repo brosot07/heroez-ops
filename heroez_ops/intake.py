@@ -14,6 +14,7 @@ Stops for good the moment an admin reply is seen. At most two questions before h
 from __future__ import annotations
 
 import datetime as dt
+import re
 import json
 import logging
 import time
@@ -34,6 +35,10 @@ WHO = [("brand", "Brand / Agency"), ("talent", "Talent / KOL"), ("other", "Lainn
 WHO_EN = [("brand", "Brand / Agency"), ("talent", "Talent / KOL"), ("other", "Other")]
 SILENCE_RESTART = 30 * 86400
 MAX_QUESTIONS = 2
+# "Sure" spam needs the AI verdict plus one of these (or a suspicious link); otherwise the sender gets the menu.
+SURE_SPAM = re.compile(r"(pinjol|pinjaman|kredit|cicilan|crypto|kripto|bitcoin|trading|judi|slot|togel|casino|kasino|"
+                       r"undian|menang(kan)?|hadiah|lucky|jackpot|deposit|withdraw|saldo|voucher|promo|diskon|cashback|"
+                       r"gratis|free|klik|click|daftar sekarang|register now|limited|terbatas|unsubscribe|bc\b|broadcast)", re.I)
 EN_TEXTS = {
     "greeting": "Hi, thank you for contacting Heroez 🙌\nMay we know who you are?",
     "brand_ask": ("Hi, thank you for contacting Heroez 🙌\nCould you tell us your brand/agency, the campaign you have in "
@@ -65,12 +70,14 @@ class Intake:
                  ai: ConciergeAI | None = None):
         self.cfg, self.store, self.engine, self.kb, self.sender = cfg, store, engine, kb, sender
         self.files_dir, self.ai = files_dir, ai
+        self.now = int(time.time())
 
     # -- entry points -------------------------------------------------------------
     def on_event(self, ev: MessageEvent, now: int | None = None) -> None:
         if ev.source == "history":
             return
-        now = now or int(time.time())
+        now = now or max(ev.ts, 0) or int(time.time())
+        self.now = now
         row = self.row(ev.wa_id)
         if ev.direction == "out":
             if row and row["status"] == "active" and ev.source in ("echo", "api"):
@@ -78,6 +85,10 @@ class Intake:
             return
         if row and row["status"] == "active":
             self._advance(row, ev, now)
+        elif row and row["status"] == "spam" and ev.text and self.cfg.intake_enabled:
+            # Second message after a spam verdict: look again instead of staying silent forever.
+            self._set(ev.wa_id, status="active", step="new", data={"texts": [ev.text[:1500]], "asked": 0, "was_spam": True})
+            self._understand_and_act(self.row(ev.wa_id), ev)
         elif self.cfg.intake_enabled and self._should_start(ev):
             self._start(ev, now)
         elif self.cfg.faq_auto_send and self._may_auto_answer(ev):
@@ -88,9 +99,16 @@ class Intake:
     def expire(self, now: int | None = None) -> int:
         """The client stopped answering: a human takes over."""
         now = now or int(time.time())
+        self.now = now
         rows = self.store.q("SELECT * FROM intake WHERE status='active' AND updated_at<?",
                             (now - self.cfg.intake_timeout_minutes * 60,))
         for r in rows:
+            data = json.loads(r["data"])
+            if data.get("maybe_spam") and len(data.get("texts", [])) <= 1:
+                # Looked like spam, got the menu, never answered: treat as spam (daily card, rescue button).
+                self._set(r["wa_id"], status="spam", outcome=data.get("spam_summary") or "diduga spam (tidak merespons menu)")
+                self.engine.mark_spam(r["wa_id"], data.get("spam_summary", ""), now)
+                continue
             self._handoff(r, "klien tidak melanjutkan percakapan")
         return len(rows)
 
@@ -99,7 +117,7 @@ class Intake:
         if not r or r["status"] != "spam":
             return False
         self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)",
-                     (wa_id, "not_spam", who, "CLOSED", int(time.time())))
+                     (wa_id, "not_spam", who, "CLOSED", self.now))
         self._handoff(r, f"ditandai bukan spam oleh {who}")
         return True
 
@@ -147,7 +165,7 @@ class Intake:
             log.error("bot send failed: %s", e)
             return False
         if mid and self.sender.live:
-            self.engine.record_bot_message(wa, mid, body, int(time.time()))
+            self.engine.record_bot_message(wa, mid, body, self.now)
         return True
 
     def _text(self, wa: str, body: str, purpose: str = "intake") -> bool:
@@ -155,7 +173,7 @@ class Intake:
 
     # -- state ------------------------------------------------------------------------
     def _set(self, wa: str, **cols) -> None:
-        cols["updated_at"] = int(time.time())
+        cols["updated_at"] = self.now
         if "data" in cols and not isinstance(cols["data"], str):
             cols["data"] = json.dumps(cols["data"], ensure_ascii=False)
         sets = ", ".join(f"{k}=?" for k in cols)
@@ -229,9 +247,20 @@ class Intake:
             self._text(wa, self._t(text_key, lang))
 
         if u.kind == "spam":
-            self._set(wa, status="spam", outcome=u.summary_id or "diduga spam")
-            self.engine.mark_spam(wa, u.summary_id, int(time.time()))
-            self.store.audit("bot", "spam", wa, {"summary": u.summary_id})
+            texts = " ".join(data.get("texts", []))
+            links_bad = self.store.one("SELECT 1 FROM message_links WHERE wa_id=? AND level IN ('suspicious','malicious')", (wa,))
+            sure = bool(links_bad or SURE_SPAM.search(texts) or data.get("was_spam"))
+            if sure or asked >= MAX_QUESTIONS:
+                self._set(wa, status="spam", outcome=u.summary_id or "diduga spam")
+                self.engine.mark_spam(wa, u.summary_id, self.now)
+                self.store.audit("bot", "spam", wa, {"summary": u.summary_id, "sure": sure})
+                return
+            # Maybe spam: send the menu once. A real person taps or writes again; spammers don't.
+            data["maybe_spam"], data["spam_summary"] = True, u.summary_id
+            data["asked"] = asked + 1
+            self._set(wa, data=data, step="who")
+            text = self._t("greeting", lang)
+            self._send(self.sender.buttons, wa, text, WHO_EN if lang == "en" else WHO, body=text)
             return
         if u.kind == "unclear":
             if asked >= MAX_QUESTIONS:
@@ -257,6 +286,11 @@ class Intake:
         knows_need = bool(u.talents or u.category not in ("unknown", "other") or u.campaign)
         if not knows_need and asked < MAX_QUESTIONS:
             ask("brand_ask", "brand")
+            return
+        if not u.talents:
+            # No KOL named / asking for a solution: supervisors decide who handles it.
+            self._text(wa, self._t("handover", lang))
+            self._handoff(self.row(wa), "lead tanpa talent tertentu", triage=True)
             return
         if u.talents and not u.dates() and asked < MAX_QUESTIONS and not data.get("asked_dates"):
             data["asked_dates"] = True
@@ -319,13 +353,22 @@ class Intake:
         if answer and self._text(wa, answer, purpose="faq"):
             self.store.audit("bot", "faq_answer", wa, {"faq": faq.get("id")})
             if self.sender.live and not self.row(wa):
-                self.engine.mark_answered_by_bot(wa, f"FAQ dijawab otomatis: {faq['questions'][0][:60]}", int(time.time()))
+                self.engine.mark_answered_by_bot(wa, f"FAQ dijawab otomatis: {faq['questions'][0][:60]}", self.now)
 
-    def _handoff(self, row, outcome: str) -> None:
+    def _handoff(self, row, outcome: str, triage: bool = False) -> None:
         self._set(row["wa_id"], status="done", outcome=outcome)
-        self.store.audit("bot", "intake_done", row["wa_id"], {"outcome": outcome})
-        summary, priority = self.summary(json.loads(row["data"]))
-        self.engine.handoff(row["wa_id"], f"{summary} ({outcome})", priority, row["first_msg_ts"], int(time.time()))
+        self.store.audit("bot", "intake_done", row["wa_id"], {"outcome": outcome, "triage": triage})
+        data = json.loads(row["data"])
+        summary, priority = self.summary(data)
+        preferred = None
+        if not triage and data.get("u", {}).get("talents"):
+            # The handler of the first KOL the brand named leads the conversation.
+            found, _ = tl.find_talents(self.store, data["u"]["talents"][:1])
+            if found:
+                h = self.store.one("SELECT handler FROM talents WHERE id=?", (found[0]["id"],))
+                preferred = (h["handler"] or None) if h else None
+        self.engine.handoff(row["wa_id"], f"{summary} ({outcome})", priority, row["first_msg_ts"], self.now,
+                            preferred=preferred, triage=triage)
 
     @staticmethod
     def summary(data: dict) -> tuple[str, str]:

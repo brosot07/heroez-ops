@@ -224,6 +224,7 @@ class Store:
             ("draft_text", "TEXT"),                         # AI reply suggestion for the current wait
             ("draft_msg_id", "TEXT"),                       # client message the draft answers
             ("draft_can_answer", "INTEGER"),
+            ("triage_since", "INTEGER"),                   # waiting for a supervisor to pick the admin
         ],
         "talents": [("calendar_url", "TEXT")],                # private: the KOL's own iCal address
         "talent_busy": [("source", "TEXT NOT NULL DEFAULT 'upload'")],   # upload | calendar

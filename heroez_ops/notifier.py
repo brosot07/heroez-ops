@@ -25,10 +25,11 @@ from .states import AWAITING_US, POSSIBLY_REPLIED
 
 log = logging.getLogger(__name__)
 
-STEP_RANK = {"overdue": 5, "urgent": 4, "management": 3, "group": 2, "reminder": 1, "nudge": 1}
-STEP_ICON = {"overdue": "🔴", "urgent": "🔴", "management": "🔴", "group": "🟠", "reminder": "🟠", "nudge": "🟠"}
+STEP_RANK = {"overdue": 5, "urgent": 4, "management": 3, "triage": 3, "group": 2, "reminder": 1, "nudge": 1}
+STEP_ICON = {"overdue": "🔴", "urgent": "🔴", "management": "🔴", "triage": "🟠", "group": "🟠", "reminder": "🟠", "nudge": "🟠"}
 STEP_LABEL = {
     "nudge": "Belum dibalas",
+    "triage": "Lead brand baru: pilih admin yang menangani",
     "reminder": "Masih belum dibalas",
     "group": "Belum dibalas >2 jam kerja",
     "management": "Lead P1 belum dibalas",
@@ -52,6 +53,7 @@ class Notifier:
     def __init__(self, cfg: Config, store: Store, clock: BusinessClock, channel: AlertChannel):
         self.cfg, self.store, self.clock, self.channel = cfg, store, clock, channel
         self.escalator = Escalator(cfg, store, clock)
+        self.escalator.engine.ai_enabled = False   # routing only; the service's engine owns AI flags
         self.before_alert = None   # callable(wa_id): e.g. prepare an AI reply suggestion
 
     # -- recipients -----------------------------------------------------
@@ -79,7 +81,11 @@ class Notifier:
                     self.before_alert(d.wa_id)
                 except Exception:
                     log.exception("before_alert failed for %s", d.wa_id)
-            for cid in dict.fromkeys(self.chat_id(r) for r in d.recipients):  # dedupe, keep order
+            recipients = d.recipients
+            if self.cfg.review:
+                # Review mode: every alert goes only to the supervisors, who judge it with 👍/👎.
+                recipients = tuple(f"spv:{s.key}" for s in self.cfg.supervisors)
+            for cid in dict.fromkeys(self.chat_id(r) for r in recipients):  # dedupe, keep order
                 if cid:
                     self.store.x("INSERT INTO outbox(chat_id,wa_id,step,created_at) VALUES(?,?,?,?)", (cid, d.wa_id, d.step, now_ts))
             missing = [r for r in d.recipients if not self.chat_id(r) and not r.startswith("group:")]
@@ -155,7 +161,9 @@ class Notifier:
             body = last["text"] or f"[{last['type']}]"
             body = defang(redact(body.replace("\n", " ")))
             snippet = "💬 “" + html.escape(body[:90] + ("…" if len(body) > 90 else "")) + "”"
-        who = self.cfg.admin(c["assignee"]).name if c and c["assignee"] and self.cfg.admin(c["assignee"]) else "-"
+        who = self.cfg.person_name(c["assignee"]) if c else "-"
+        if c and c["triage_since"] and not c["assignee"]:
+            who = "menunggu supervisor"
         head = f"{STEP_ICON.get(step, '🟠')} <b>{name}</b> ({display(wa_id)}) · {kind}{prio}"
         if step:
             head += f"\n{STEP_LABEL[step]}"
@@ -177,22 +185,52 @@ class Notifier:
         last = self.store.one("SELECT id FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (c["wa_id"],))
         return bool(last and last["id"] == c["draft_msg_id"])
 
+    def _buttons(self, wa_id: str, step: str) -> list[list[Button]]:
+        if step == "triage":
+            rows = [[Button(f"→ {a.name[:12]}", f"assign:{wa_id}:{a.key}") for a in self.cfg.admins],
+                    [Button("✋ Saya tangani sendiri", f"claim:{wa_id}")]]
+        else:
+            rows = [[Button("✋ Saya ambil", f"claim:{wa_id}"), Button("✅ Sudah dibalas", f"done:{wa_id}")],
+                    [Button("⏰ Tunda 1 jam", f"snooze:{wa_id}")]]
+        if self.cfg.review:
+            rows.append([Button("👍 Notifikasi benar", f"fb_ok:{wa_id}"), Button("👎 Salah / tidak perlu", f"fb_no:{wa_id}")])
+        return rows
+
+    def spam_card(self, now: dt.datetime) -> tuple[str, list[list[Button]]] | None:
+        """Yesterday's dropped messages with a rescue button each, for supervisors."""
+        rows = self.store.q("SELECT i.wa_id, i.outcome, c.name FROM intake i JOIN contacts c USING(wa_id) "
+                            "WHERE i.status='spam' AND i.updated_at>? ORDER BY i.updated_at DESC LIMIT 10",
+                            (int(now.timestamp()) - 86400,))
+        if not rows:
+            return None
+        lines = [f"🗑️ <b>{len(rows)} pesan diduga spam kemarin</b> (bot tidak membalas). Tekan tombol kalau ternyata bukan spam."]
+        buttons = []
+        for i, r in enumerate(rows, 1):
+            last = self.store.one("SELECT text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (r["wa_id"],))
+            body = defang(redact(((last["text"] if last else "") or "")[:80]))
+            lines.append(f"{i}. <b>{html.escape(defang(r['name'] or display(r['wa_id'])))}</b> · {html.escape(defang(r['outcome'] or ''))}\n"
+                         f"   💬 “{html.escape(body)}”")
+            buttons.append([Button(f"Bukan spam {i}", f"notspam:{r['wa_id']}")])
+        return "\n".join(lines), buttons
+
     def render(self, items: list[tuple[str, str]], now: dt.datetime) -> tuple[str, list[list[Button]]]:
         if len(items) == 1:
             wa_id, step = items[0]
             text = self.item_lines(wa_id, now, step)
-            buttons = [
-                [Button("✋ Saya ambil", f"claim:{wa_id}"), Button("✅ Sudah dibalas", f"done:{wa_id}")],
-                [Button("⏰ Tunda 1 jam", f"snooze:{wa_id}")],
-            ]
+            buttons = self._buttons(wa_id, step)
             return text, buttons
         blocks = [f"{i}. " + self.item_lines(wa_id, now, step) for i, (wa_id, step) in enumerate(items, 1)]
         legend = "Tombol: ✋ Saya ambil · ✅ Sudah dibalas · ⏰ Tunda 1 jam"
         text = f"<b>{len(items)} chat perlu dibalas</b>\n\n" + "\n\n".join(blocks) + f"\n\n<i>{legend}</i>"
-        buttons = [
-            [Button(f"✋{i}", f"claim:{w}"), Button(f"✅{i}", f"done:{w}"), Button(f"⏰{i}", f"snooze:{w}")]
-            for i, (w, _) in enumerate(items, 1)
-        ]
+        buttons = []
+        for i, (w, step) in enumerate(items, 1):
+            if step == "triage":
+                buttons.append([Button(f"{i}→{a.name[:10]}", f"assign:{w}:{a.key}") for a in self.cfg.admins]
+                               + [Button(f"✋{i}", f"claim:{w}")])
+            else:
+                buttons.append([Button(f"✋{i}", f"claim:{w}"), Button(f"✅{i}", f"done:{w}"), Button(f"⏰{i}", f"snooze:{w}")])
+            if self.cfg.review:
+                buttons.append([Button(f"👍{i}", f"fb_ok:{w}"), Button(f"👎{i}", f"fb_no:{w}")])
         return text, buttons
 
     # -- queues & morning list ------------------------------------------
@@ -241,9 +279,12 @@ class Notifier:
         for a in self.cfg.admins:
             if a.telegram_id and a.key in mine:
                 self.channel.send(a.telegram_id, "☀️ Selamat pagi!\n\n" + self.queue_text(a.key, now))
+        card = self.spam_card(now)
         for s in self.cfg.supervisors:
             if s.telegram_id:
                 self.channel.send(s.telegram_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now) + spam_line)
+                if card:
+                    self.channel.send(s.telegram_id, card[0], card[1])
         if self.cfg.admin_group_id:
             self.channel.send(self.cfg.admin_group_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now) + spam_line)
         self.store.audit("system", "morning_list", None, None, int(now.timestamp()))

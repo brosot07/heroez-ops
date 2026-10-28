@@ -116,12 +116,14 @@ class Engine:
         self.store.x(f"UPDATE conversations SET {sets} WHERE wa_id=?", (*cols.values(), wa_id))
         return Change(wa_id, old, new, reason) if old != new else None
 
-    def _assign(self, wa_id: str, at: int) -> None:
+    def _assign(self, wa_id: str, at: int, preferred: str | None = None) -> None:
         conv = self.conversation(wa_id)
         if conv and conv["assignee"]:
             return
         contact = self.store.one("SELECT kind, handler FROM contacts WHERE wa_id=?", (wa_id,))
-        if contact and contact["handler"]:
+        if preferred and self.cfg.admin(preferred):
+            assignee, how = preferred, "kol_handler"
+        elif contact and contact["handler"]:
             how = "roster" if contact["kind"] == "talent" else "sticky"
             assignee = contact["handler"]
         else:
@@ -249,12 +251,42 @@ class Engine:
         self.store.x("INSERT OR IGNORE INTO messages(id,wa_id,direction,source,ts,type,text,raw,created_at) "
                      "VALUES(?,?,?,?,?,?,?,?,?)", (msg_id, wa_id, "out", "bot", ts, "text", body, "{}", ts))
 
-    def handoff(self, wa_id: str, summary: str, priority: str, since: int, at: int) -> Change | None:
-        """The bot is done; a human must reply now. Starts the normal reminder clock."""
+    def handoff(self, wa_id: str, summary: str, priority: str, since: int, at: int,
+                preferred: str | None = None, triage: bool = False) -> Change | None:
+        """The bot is done; a human must reply now. Starts the normal reminder clock.
+
+        preferred: admin key that should get it (the handler of the first KOL the brand named).
+        triage: no admin yet; supervisors choose one (or it falls back to round-robin after a while).
+        """
         change = self._set_state(wa_id, AWAITING_US, f"bot: {summary}", at, waiting_since=since, fired_steps="[]",
-                                 ai_pending=0, ai_summary=summary, priority=priority, snoozed_until=None)
-        self._assign(wa_id, at)
+                                 ai_pending=0, ai_summary=summary, priority=priority, snoozed_until=None,
+                                 triage_since=at if triage else None)
+        if triage:
+            self.store.x("UPDATE conversations SET assignee=NULL WHERE wa_id=?", (wa_id,))
+            self.store.audit("system", "triage_wait", wa_id, None, at)
+        else:
+            conv = self.conversation(wa_id)
+            if preferred and self.cfg.admin(preferred) and conv and conv["assigned_how"] in (None, "round_robin"):
+                # The message was round-robined on arrival; the named KOL's handler takes precedence.
+                self.store.x("UPDATE conversations SET assignee=NULL WHERE wa_id=?", (wa_id,))
+            self._assign(wa_id, at, preferred=preferred)
         return change
+
+    def triage_timeout(self, wa_id: str, at: int) -> None:
+        """No supervisor chose in time: round-robin so the lead never sits."""
+        self.store.x("UPDATE conversations SET triage_since=NULL WHERE wa_id=?", (wa_id,))
+        self._assign(wa_id, at)
+        self.store.audit("system", "triage_timeout", wa_id, None, at)
+
+    def record_alert_feedback(self, wa_id: str, ok: bool, who: str, at: int) -> None:
+        """Review mode: a supervisor judged an alert. 👎 also closes the chat (no reply needed)."""
+        conv = self.conversation(wa_id)
+        self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)",
+                     (wa_id, "alert_ok" if ok else "alert_wrong", who, conv["state"] if conv else None, at))
+        if not ok and conv and conv["state"] == AWAITING_US:
+            self._set_state(wa_id, CLOSED, f"supervisor: notifikasi salah ({who})", at,
+                            waiting_since=None, fired_steps="[]", snoozed_until=None, ai_pending=0, ai_msg_id=None)
+        self.store.audit(who, "alert_feedback", wa_id, {"ok": ok}, at)
 
     def mark_spam(self, wa_id: str, summary: str, at: int) -> Change | None:
         return self._set_state(wa_id, CLOSED, f"diduga spam (AI): {summary}"[:300], at, waiting_since=None,
@@ -265,10 +297,14 @@ class Engine:
                                ai_pending=0, ai_msg_id=None)
 
     # -- admin actions (Telegram buttons) ------------------------------
-    def claim(self, wa_id: str, admin: str, at: int) -> None:
-        self.store.x("UPDATE conversations SET assignee=?, assigned_how='claim', updated_at=? WHERE wa_id=?", (admin, at, wa_id))
-        self.store.x("UPDATE contacts SET handler=? WHERE wa_id=? AND kind!='talent'", (admin, wa_id))
-        self.store.audit(admin, "claim", wa_id, None, at)
+    def claim(self, wa_id: str, admin: str, at: int, by: str | None = None) -> None:
+        """admin: an admin key or 'spv:<key>' (a supervisor handling it personally)."""
+        how = "triage" if by and by != admin else "claim"
+        self.store.x("UPDATE conversations SET assignee=?, assigned_how=?, triage_since=NULL, updated_at=? WHERE wa_id=?",
+                     (admin, how, at, wa_id))
+        if not admin.startswith("spv:"):
+            self.store.x("UPDATE contacts SET handler=? WHERE wa_id=? AND kind!='talent'", (admin, wa_id))
+        self.store.audit(by or admin, "claim", wa_id, {"assignee": admin}, at)
 
     def mark_replied(self, wa_id: str, admin: str, at: int) -> None:
         conv = self.conversation(wa_id)

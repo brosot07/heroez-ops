@@ -49,7 +49,7 @@ class Service:
         # Shadow mode: alerts are only logged. Command replies still go to Telegram so
         # management can use /semua during the shadow week.
         self.alert_channel = alert_channel or (
-            telegram if cfg.live and telegram else ShadowAlertChannel(Path(data_dir) / "shadow_alerts.jsonl"))
+            telegram if cfg.alerts_live and telegram else ShadowAlertChannel(Path(data_dir) / "shadow_alerts.jsonl"))
         self.reply_channel = reply_channel or telegram or self.alert_channel
         self.notifier = Notifier(cfg, store, self.clock, self.alert_channel)
         self.digest = Digest(cfg, store, self.clock)

@@ -81,6 +81,11 @@ class Digest:
         calls, usd = month_cost(self.store, end.astimezone(self.cfg.tz).date())
         if calls:
             lines += ["", f"🤖 AI bulan ini: {calls} pesan dicek · ±US${usd:.2f}"]
+        judged = feedback.get("alert_ok", 0) + feedback.get("alert_wrong", 0)
+        if judged:
+            total_ok = self.store.one("SELECT SUM(kind='alert_ok') ok, COUNT(*) n FROM feedback WHERE kind IN ('alert_ok','alert_wrong')")
+            lines += ["", f"🧪 Uji coba notifikasi: 👍 {feedback.get('alert_ok', 0)} · 👎 {feedback.get('alert_wrong', 0)} kemarin · "
+                          f"total {int(total_ok['ok'] or 0)}/{total_ok['n']} benar ({100 * int(total_ok['ok'] or 0) // max(total_ok['n'], 1)}%)"]
         if feedback:
             lines += ["", f"Koreksi admin: ✅ {feedback.get('already_replied', 0)} · 🚫 {feedback.get('not_ours', 0)}"]
         return "\n".join(lines)

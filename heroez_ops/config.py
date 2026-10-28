@@ -40,6 +40,7 @@ class Escalation:
     overdue_after_real_hours: int = 24
     snooze_minutes: int = 60
     repeat_every_business_min: int = 60   # 0 = never repeat
+    triage_minutes: int = 30              # supervisors' time to pick an admin before round-robin
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,27 @@ class Config:
 
     @property
     def live(self) -> bool:
+        """Bot messages to clients go out only in live mode."""
         return self.mode == "live"
+
+    @property
+    def alerts_live(self) -> bool:
+        """Telegram alerts go out in live mode and in review mode (to supervisors only)."""
+        return self.mode in ("live", "review")
+
+    @property
+    def review(self) -> bool:
+        return self.mode == "review"
+
+    def person_name(self, key: str | None) -> str:
+        """Display name for an assignee key: an admin key or 'spv:<key>'."""
+        if not key:
+            return "-"
+        if key.startswith("spv:"):
+            s = self.supervisor(key[4:])
+            return s.name if s else "-"
+        a = self.admin(key)
+        return a.name if a else "-"
 
     def admin(self, key: str) -> Admin | None:
         return next((a for a in self.admins if a.key == key), None)
@@ -153,8 +174,8 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         raise ConfigError(f"Config file {path} is not valid YAML: {e}") from e
 
     mode = raw.get("mode", "shadow")
-    if mode not in ("shadow", "live"):
-        raise ConfigError(f"mode must be 'shadow' or 'live', got {mode!r}")
+    if mode not in ("shadow", "review", "live"):
+        raise ConfigError(f"mode must be 'shadow', 'review' or 'live', got {mode!r}")
 
     bh = raw.get("business_hours", {})
     days = frozenset(int(d) for d in bh.get("days", [0, 1, 2, 3, 4, 5]))

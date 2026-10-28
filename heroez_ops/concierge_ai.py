@@ -66,7 +66,8 @@ class Understanding:
             elif k == "platforms":
                 out.platforms = list(dict.fromkeys(self.platforms + v))
             elif k == "kind":
-                out.kind = v if self.kind in ("unclear", "") else self.kind
+                # A clearer later message may overrule an early "unclear", "spam" or "other" verdict.
+                out.kind = v if (v != "unclear" and self.kind in ("unclear", "", "spam", "other")) else self.kind
             elif k in ("needs_human", "asks_specific_time"):
                 setattr(out, k, getattr(self, k) or v)
             elif v not in ("", 0, "unknown", None):

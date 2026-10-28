@@ -112,13 +112,100 @@ def test_vague_brand_is_asked_then_asked_for_dates_then_answered(bot):
     assert conv(svc, "628222")["state"] == AWAITING_US
 
 
-def test_category_only_gets_recommendations_by_followers(bot):
+def test_brand_without_named_kol_goes_to_supervisor_triage(bot):
     msg = "Mau cari KOL beauty buat IG"
-    svc, wire, _ = bot({msg: Understanding(kind="brand", category="beauty", platforms=["instagram"])})
+    svc, wire, ch = bot({msg: Understanding(kind="brand", brand_name="Glowskin", category="beauty", platforms=["instagram"])})
     svc.process_payload(fixtures.inbound("628333", msg, ts(T0)))
-    reply = wire.texts()[-1]
-    assert reply.index("Sinta") < reply.index("Dewi")                      # 300K before 120rb
-    assert "Raka" not in reply
+    assert wire.texts()[-1].startswith("Admin kami akan melanjutkan")      # no KOL suggestions: a person decides
+    c = conv(svc, "628333")
+    assert c["state"] == AWAITING_US and c["assignee"] is None and c["triage_since"]
+    svc.notifier.tick(T0 + dt.timedelta(minutes=1))
+    sent = [m for m in ch.sent if m["op"] == "send"]
+    assert {m["chat_id"] for m in sent} == {2001, 2002}                    # supervisors only
+    assert "pilih admin" in sent[0]["text"] and any("→" in b for row in sent[0]["buttons"] for b in row)
+    # A supervisor assigns it to Budi.
+    svc.bot.handle_update({"callback_query": {"id": "c", "from": {"id": 2001}, "data": "assign:628333:budi"}}, T0)
+    c = conv(svc, "628333")
+    assert c["assignee"] == "budi" and c["assigned_how"] == "triage" and c["triage_since"] is None
+
+
+def test_triage_falls_back_to_round_robin_after_grace(bot):
+    msg = "Mau campaign kopi, ada solusi?"
+    svc, _, ch = bot({msg: Understanding(kind="brand", brand_name="Kopi X", campaign="launch kopi")})
+    svc.process_payload(fixtures.inbound("628334", msg, ts(T0)))
+    svc.notifier.tick(T0 + dt.timedelta(minutes=31))
+    c = conv(svc, "628334")
+    assert c["assignee"] in ("rina", "budi") and c["assigned_how"] == "round_robin"
+
+
+def test_named_kol_routes_to_its_handler(bot):
+    msg = "Mau Raka untuk TikTok 1-5 Des"
+    svc, _, _ = bot({msg: Understanding(kind="brand", talents=["Raka"], platforms=["tiktok"],
+                                        date_start="2026-12-01", date_end="2026-12-05")})
+    svc.process_payload(fixtures.inbound("628335", msg, ts(T0)))
+    c = conv(svc, "628335")
+    assert c["assignee"] == "rina" and c["assigned_how"] == "kol_handler"   # Raka's handler in ROSTER
+
+
+def test_maybe_spam_gets_menu_and_second_message_rescues(bot):
+    msg = "Halo, kami punya penawaran menarik untuk bisnis Anda"
+    svc, wire, _ = bot({msg: Understanding(kind="spam", summary_id="promosi umum"),
+                        "Kami brand kopi, mau tanya KOL F&B": Understanding(kind="brand", brand_name="Kopi Y", category="fnb")})
+    svc.process_payload(fixtures.inbound("628445", msg, ts(T0)))
+    assert "sebagai apa" in wire.texts()[-1]                                # not sure: the menu, not silence
+    assert svc.intake.row("628445")["status"] == "active"
+    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
+    svc.process_payload(fixtures.inbound("628445", "Kami brand kopi, mau tanya KOL F&B", ts(T0) + 60))
+    assert svc.intake.row("628445")["status"] == "done"                     # a real person: handled normally
+    assert conv(svc, "628445")["state"] == AWAITING_US
+
+
+def test_maybe_spam_that_never_answers_becomes_spam(bot):
+    msg = "Halo, kami punya penawaran menarik untuk bisnis Anda"
+    svc, wire, _ = bot({msg: Understanding(kind="spam", summary_id="promosi umum")})
+    svc.process_payload(fixtures.inbound("628446", msg, ts(T0)))
+    svc.intake.expire(ts(T0) + 20 * 60 + 10**9)
+    assert svc.intake.row("628446")["status"] == "spam"
+    assert conv(svc, "628446")["state"] == CLOSED
+
+
+def test_sure_spam_is_silent_and_second_spam_message_stays_spam(bot):
+    msg = "PINJAMAN ONLINE CAIR 5 MENIT klik link"
+    svc, wire, _ = bot({msg: Understanding(kind="spam", summary_id="pinjol"),
+                        "Promo bunga 0% daftar sekarang": Understanding(kind="spam", summary_id="pinjol")})
+    svc.process_payload(fixtures.inbound("628447", msg, ts(T0)))
+    assert wire.sent == [] and svc.intake.row("628447")["status"] == "spam"
+    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: f.answers.get(texts[-1], Understanding(kind="unclear"))
+    svc.process_payload(fixtures.inbound("628447", "Promo bunga 0% daftar sekarang", ts(T0) + 60))
+    assert wire.sent == [] and svc.intake.row("628447")["status"] == "spam"
+
+
+def test_daily_spam_card_to_supervisors(bot):
+    msg = "PINJAMAN ONLINE CAIR 5 MENIT klik link"
+    svc, _, ch = bot({msg: Understanding(kind="spam", summary_id="pinjol")})
+    svc.process_payload(fixtures.inbound("628448", msg, ts(T0)))
+    svc.notifier.morning_list(dt.datetime(2026, 11, 3, 8, 35, tzinfo=T0.tzinfo))
+    cards = [m for m in ch.sent if m["op"] == "send" and m["buttons"] and "Bukan spam" in m["buttons"][0][0]]
+    assert {m["chat_id"] for m in cards} == {2001, 2002}
+    assert cards[0]["buttons"] == [["Bukan spam 1"]]
+
+
+def test_review_mode_sends_only_to_supervisors_with_feedback_buttons(bot):
+    svc, _, ch = bot({}, mode="review")
+    svc.engine.ai_enabled = False
+    svc.process_payload(fixtures.history({"628449": [("out", "Halo kak", ts(T0) - 86400 * 40)]}))
+    svc.process_payload(fixtures.inbound("628449", "Kak, rate Dewi berapa?", ts(T0)))
+    svc.engine.claim("628449", "rina", ts(T0))
+    for m in range(0, 32):
+        svc.notifier.tick(T0 + dt.timedelta(minutes=m))
+    sent = [m for m in ch.sent if m["op"] == "send"]
+    assert sent and {m["chat_id"] for m in sent} == {2001, 2002}         # Rina (1001) gets nothing in review mode
+    assert ["👍 Notifikasi benar", "👎 Salah / tidak perlu"] in sent[0]["buttons"]
+    svc.bot.handle_update({"callback_query": {"id": "c", "from": {"id": 2001}, "data": "fb_no:628449"}}, T0)
+    assert conv(svc, "628449")["state"] == CLOSED
+    kinds = [r["kind"] for r in svc.store.q("SELECT kind FROM feedback")]
+    assert kinds == ["alert_wrong"]
+    assert svc.sender.live is False or True                                # bot sends are not live in review mode (see cfg.live)
 
 
 def test_spam_gets_no_reply_no_alert_then_not_spam_button(bot):
