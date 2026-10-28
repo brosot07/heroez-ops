@@ -83,6 +83,10 @@ class Digest:
             lines += ["", f"🤖 AI bulan ini: {calls} pesan dicek · ±US${usd:.2f}"]
         from .deals import Deals
         lines += ["", *Deals(self.cfg, self.store).summary_lines(s, e)]
+        from .promises import Promises
+        ps = Promises(self.cfg, self.store, self.clock, None).stats(s, e)
+        if ps["kept"] or ps["late"] or ps["open_late"]:
+            lines += ["", f"🤝 Janji ke klien: ditepati {ps['kept']} · terlambat {ps['late']} · masih terbuka lewat tempo {ps['open_late']}"]
         from .learning import Learning
         ds = Learning(self.store).draft_stats(e - 7 * 86400, e)
         if ds["n"]:

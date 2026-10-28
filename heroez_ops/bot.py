@@ -23,6 +23,7 @@ HELP = (
     "/semua – semua chat yang menunggu\n"
     "/cari &lt;nama atau nomor&gt; – cari kontak\n"
     "/spam – pesan yang diduga spam (tidak dibalas bot)\n"
+    "/janji – janji yang kamu tulis ke klien (\"besok saya kirim\") dan belum ditandai selesai\n"
     "/hapus &lt;nomor&gt; – supervisor: hapus semua data satu nomor (permintaan klien)\n"
     "/bantuan – pesan ini\n\n"
     "Tombol di notifikasi:\n"
@@ -97,6 +98,21 @@ class Bot:
                 self.channel.answer_callback(cq["id"], "✅ Diteruskan ke admin sebagai chat biasa.")
             else:
                 self.channel.answer_callback(cq["id"], "Sudah ditangani.")
+            return
+        if action in ("pdone", "psnooze"):
+            svc = getattr(self, "service", None)
+            if not svc or not extra.isdigit():
+                return
+            if action == "pdone":
+                ok = svc.promises.mark_done(int(extra), actor, at)
+                note = f"✅ Janji ditandai selesai ({self._name(actor)})"
+            else:
+                ok = svc.promises.snooze(int(extra), at)
+                note = f"⏰ Diingatkan lagi 2 jam ({self._name(actor)})"
+            self.channel.answer_callback(cq["id"], note if ok else "Sudah ditandai.")
+            msg = cq.get("message") or {}
+            if ok and msg.get("message_id"):
+                self.channel.edit(msg["chat"]["id"], msg["message_id"], (msg.get("text") or "") + "\n\n" + html.escape(note), None)
             return
         if action in ("dealyes", "dealno"):
             svc = getattr(self, "service", None)
@@ -188,6 +204,12 @@ class Bot:
             self.channel.send(chat_id, self.notifier.queue_text(key, now))
         elif cmd == "/semua":
             self.channel.send(chat_id, self.notifier.queue_text(None, now))
+        elif cmd == "/janji":
+            if self.service is None:
+                self.channel.send(chat_id, "Fitur ini belum aktif.")
+            else:
+                key = actor if self.cfg.admin(actor) else None
+                self.channel.send(chat_id, self.service.promises.open_text(key, now))
         elif cmd == "/hapus":
             if not actor.startswith("spv:"):
                 self.channel.send(chat_id, "Hanya supervisor yang bisa menghapus data nomor.")

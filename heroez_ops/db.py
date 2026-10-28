@@ -247,6 +247,20 @@ CREATE TABLE IF NOT EXISTS deals (
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS deals_wa ON deals(wa_id, stage);
+CREATE TABLE IF NOT EXISTS promises (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT NOT NULL,
+    admin TEXT,                              -- admin key who promised (assignee at the time)
+    text TEXT NOT NULL,                      -- redacted sentence
+    due_at INTEGER NOT NULL,
+    status TEXT NOT NULL,                    -- open | done | expired
+    created_at INTEGER NOT NULL,
+    reminded_at INTEGER,
+    escalated_at INTEGER,
+    done_at INTEGER,
+    done_by TEXT
+);
+CREATE INDEX IF NOT EXISTS promises_open ON promises(status, due_at);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

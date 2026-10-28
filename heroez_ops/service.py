@@ -24,6 +24,7 @@ from .kb import KB
 from .learning import Learning
 from .links import LinkChecker
 from .notifier import Notifier
+from .promises import Promises
 from .sources.base import MessageEvent
 from .sources.meta import MetaCoexistenceSource
 from .sources.meta_send import MetaSender, month_sends
@@ -61,6 +62,7 @@ class Service:
         self.links = LinkChecker(store, cfg.urlhaus_auth_key)
         self.learning = Learning(store)
         self.deals = Deals(cfg, store)
+        self.promises = Promises(cfg, store, self.clock, self.alert_channel)
         shadow_dir = Path(data_dir) if data_dir else Path("data")
         self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
@@ -121,6 +123,11 @@ class Service:
                         self.learning.on_admin_reply(ev)
                     except Exception:
                         log.exception("learning hook failed for %s", ev.wa_id)
+                    if ev.source != "history":
+                        try:
+                            self.promises.on_admin_reply(ev)
+                        except Exception:
+                            log.exception("promise hook failed for %s", ev.wa_id)
 
     # -- Telegram long polling -------------------------------------------
     def poll_telegram_once(self, wait_seconds: int = 25) -> int:
@@ -145,6 +152,7 @@ class Service:
         self.intake.expire(int(now.timestamp()))
         self.classify_pending(now)
         self.notifier.tick(now)
+        self.promises.remind(now)
         self.digest.maybe_send(now, self.alert_channel)
         self.check_quiet_inbox(now)
         self.daily_maintenance(now)
@@ -244,6 +252,7 @@ class Service:
         self.store.x("DELETE FROM message_links WHERE msg_id IN (SELECT id FROM messages WHERE ts < ?)", (cutoff,))
         self.store.x("DELETE FROM link_checks WHERE checked_at < ?", (now_ts - 7 * 86400,))
         self.learning.prune(cutoff)
+        self.promises.prune(cutoff)
         self.store.x("UPDATE audit_log SET detail=NULL WHERE at < ? AND detail IS NOT NULL", (now_ts - 365 * 86400,))
         self.store.audit("system", "retention", None, {"texts_erased": erased, "raw_deleted": pruned}, now_ts)
         if self.data_dir:
