@@ -42,6 +42,7 @@ EN_TEXTS = {
     "talent_list_intro": "Here are the talents you asked about:",
     "recommend_intro": "Here are some of our talents that fit:",
     "not_in_list": "For {names}, our admin will check and get back to you.",
+    "alternatives_intro": "As alternatives available on those dates:",
     "price_note": "Prices are per content, excluding tax.",
     "ratecard_caption": "Here is our package rate card 🙏",
     "handover": "Our admin will continue the discussion within {sla} 🙏",
@@ -240,9 +241,10 @@ class Intake:
             ask("other_prompt", "other_msg")
             return
         # brand
-        if u.needs_human:
+        if u.needs_human or u.asks_specific_time:
+            # Hour-level schedules and anything beyond rates/availability: a person answers.
             self._text(wa, self._t("handover", lang))
-            self._handoff(self.row(wa), "perlu admin")
+            self._handoff(self.row(wa), "minta jam tertentu" if u.asks_specific_time else "perlu admin")
             return
         knows_need = bool(u.talents or u.category not in ("unknown", "other") or u.campaign)
         if not knows_need and asked < MAX_QUESTIONS:
@@ -259,9 +261,17 @@ class Intake:
         dates = u.dates()
         lines: list[str] = []
         found, missing = tl.find_talents(self.store, u.talents) if u.talents else ([], [])
+        alternatives = []
         if found:
             lines.append(self._t("talent_list_intro", lang))
             lines += [tl.talent_line(self.store, r, u.platforms, dates, lang) for r in found]
+            if dates:
+                busy = [r for r in found if not tl.available(self.store, r["id"], *dates)]
+                if busy:
+                    alternatives = tl.alternatives(self.store, busy, u.category, dates, exclude={r["id"] for r in found})
+            if alternatives:
+                lines.append(self._t("alternatives_intro", lang))
+                lines += [tl.talent_line(self.store, r, u.platforms, dates, lang) for r in alternatives]
         if missing:
             lines.append(self._t("not_in_list", lang, names=", ".join(missing)))
         if not found:
@@ -276,7 +286,8 @@ class Intake:
         lines.append(self._t("handover", lang))
         self._text(wa, "\n".join(lines))
         data = json.loads(row["data"])
-        data["answered"] = {"found": [r["name"] for r in found], "missing": missing}
+        data["answered"] = {"found": [r["name"] for r in found], "missing": missing,
+                            "alternatives": [r["name"] for r in alternatives]}
         self._set(wa, data=data)
         self._handoff(self.row(wa), "info talent dikirim" if found else "dijawab bot")
 
@@ -315,6 +326,8 @@ class Intake:
             parts = [u.brand_name or "brand", u.campaign]
             if data.get("answered", {}).get("found"):
                 parts.append("talent: " + ", ".join(data["answered"]["found"]))
+            if data.get("answered", {}).get("alternatives"):
+                parts.append("alternatif: " + ", ".join(data["answered"]["alternatives"]))
             elif u.talents:
                 parts.append("tanya: " + ", ".join(u.talents))
             d = u.dates()

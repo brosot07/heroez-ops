@@ -45,9 +45,10 @@ link **Buka chat** (langsung membuka chat di WhatsApp).
 | ✋ **Saya ambil** | Chat ini kamu yang pegang. Chat berikutnya dari kontak ini juga akan ke kamu. |
 | ✅ **Sudah dibalas** | Kamu sudah balas tapi sistem masih mengingatkan (misalnya balas lewat telepon). |
 | ⏰ **Tunda 1 jam** | Sedang menunggu info internal; ingatkan lagi 1 jam lagi. |
-| 🚫 **Bukan urusan kita** | Chat ini tidak perlu dibalas (spam, salah kirim, dll). |
 
-Tombol ✅ dan 🚫 juga membantu sistem belajar. Pakai dengan jujur. 🙏
+Tombol ✅ juga membantu sistem belajar. Pakai dengan jujur. 🙏
+
+💡 **Saran balasan**: usulan balasan dari AI. Kalau cocok, salin ke WhatsApp dan kirim sendiri; boleh diubah dulu.
 
 ## 4. Perintah di bot
 

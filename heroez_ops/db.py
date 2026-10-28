@@ -210,6 +210,8 @@ class Store:
             ("draft_msg_id", "TEXT"),                       # client message the draft answers
             ("draft_can_answer", "INTEGER"),
         ],
+        "talents": [("calendar_url", "TEXT")],                # private: the KOL's own iCal address
+        "talent_busy": [("source", "TEXT NOT NULL DEFAULT 'upload'")],   # upload | calendar
     }
 
     def _migrate(self) -> None:

@@ -20,6 +20,8 @@ For brands, extract what is stated (leave empty when not stated, never guess):
   "awal Desember", "tanggal 10") using today's date given below; for a whole month use its first and last day.
   If only one day is given, use it for both.
 - budget_idr: total budget in rupiah as a number if stated, else 0
+- asks_specific_time: true if they ask about a specific time of day or hour slot (e.g. "live jam 19.00",
+  "posting jam 8 malam", "bisa jam 10 pagi?", "slot sore"). Dates alone are not a specific time.
 - needs_human: true if they complain, negotiate, ask for a discount, ask something beyond rates and
   availability (contracts, payment, a custom package, a past campaign), or are clearly an existing client.
 

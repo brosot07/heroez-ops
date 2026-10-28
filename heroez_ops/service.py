@@ -16,6 +16,7 @@ from .config import Config
 from .db import Store
 from .digest import Digest
 from .drafts import Drafter
+from . import calendar_sync
 from .concierge_ai import ConciergeAI
 from .intake import Intake
 from .kb import KB
@@ -66,7 +67,7 @@ class Service:
         if self.drafter:
             self.notifier.before_alert = self.drafter.ensure
         reply_notifier = Notifier(cfg, store, self.clock, self.reply_channel)
-        self.bot = Bot(cfg, store, self.engine, reply_notifier, self.reply_channel, sender=self.sender, intake=self.intake)
+        self.bot = Bot(cfg, store, self.engine, reply_notifier, self.reply_channel, intake=self.intake)
 
     # -- ingest -----------------------------------------------------------
     def accept_webhook(self, source: str, body: bytes) -> None:
@@ -125,6 +126,7 @@ class Service:
         self.check_quiet_inbox(now)
         self.daily_maintenance(now)
         self.check_send_budget(now)
+        calendar_sync.maybe_sync(self.store, self.cfg.tz, now.timestamp())
 
     def check_send_budget(self, now: dt.datetime) -> None:
         """Warn supervisors once a month when bot sends pass 80% of the monthly budget."""

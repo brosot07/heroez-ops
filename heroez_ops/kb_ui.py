@@ -83,10 +83,32 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                f'<a href="/pengetahuan/contoh.xlsx">Download contoh</a>.</p>{upload("/pengetahuan/kol", "Upload daftar KOL", ".xlsx,.csv")}'
                f'<div class="scroll" style="max-height:320px;overflow:auto;margin-top:12px"><table><tr><th>Nama</th><th>Info (bisa dilihat klien)</th>'
                f'<th>Rate</th></tr>{kol_rows}</table></div></div>')
-        cal = (f'<div class="card"><h2>Jadwal / ketersediaan ({n_busy} periode terisi)</h2>'
+        cal = (f'<div class="card"><h2>Jadwal tambahan dari Excel ({n_busy} periode terisi total)</h2>'
                f'<p class="muted">Excel/CSV dengan kolom <b>Nama</b>, <b>Mulai</b>, <b>Selesai</b> untuk tanggal talent <b>tidak tersedia</b>. '
                f'Kolom lain (brand, pekerjaan, catatan) diabaikan dan tidak disimpan, jadi bot hanya bisa bilang '
                f'“tersedia / tidak tersedia”, tanpa alasan.</p>{upload("/pengetahuan/jadwal", "Upload jadwal", ".xlsx,.csv")}</div>')
+        cal_status = json.loads(ui.store.get_kv("calendar_status", "{}") or "{}")
+        urls = kb.get("calendar_urls", []) or []
+        n_own = ui.store.one("SELECT COUNT(*) n FROM talents WHERE calendar_url LIKE 'http%'")["n"]
+        if cal_status:
+            when = time.strftime("%d/%m %H:%M", time.localtime(cal_status["at"]))
+            sync_line = (f'Terakhir sinkron {when}: {cal_status["calendars"]} kalender, {cal_status["events"]} acara, '
+                         f'{cal_status["matched"]} cocok dengan talent'
+                         + (f', <b>{cal_status["unmatched"]} tidak cocok</b> (nama talent tidak ada di judul acara)' if cal_status["unmatched"] else "")
+                         + ("".join(f'<br>⚠️ {e(x)}' for x in cal_status["errors"]) if cal_status["errors"] else ""))
+        else:
+            sync_line = "Belum pernah sinkron."
+        gcal = (f'<div class="card"><h2>Google Calendar (otomatis tiap 15 menit)</h2>'
+                f'<p class="muted">Google Calendar → Setelan kalender → <b>Alamat rahasia dalam format iCal</b> → salin. '
+                f'Satu alamat per baris. Di kalender bersama, judul acara harus memuat <b>nama</b> atau <b>@handle</b> talent '
+                f'(mis. “Dewi – shooting”). Kalender per talent: isi kolom “Kalender” di daftar KOL. '
+                f'Yang disimpan hanya tanggalnya; judul dan isi acara tidak disimpan. Acara bertanda “Free/Tersedia” diabaikan.</p>'
+                f'<p>{len(urls)} kalender bersama · {n_own} kalender per talent · {sync_line}</p>'
+                f'<form method="post" action="/pengetahuan/kalender">{csrf}'
+                f'<label>Alamat iCal kalender bersama <small>(kosongkan untuk tidak mengubah)</small></label>'
+                f'<textarea name="urls" rows="3" placeholder="https://calendar.google.com/calendar/ical/.../private-.../basic.ics" {dis}></textarea>'
+                f'<label style="font-weight:400"><input type="checkbox" name="clear" {dis}> Hapus semua alamat kalender bersama</label><br>'
+                f'<button type="submit" {dis}>Simpan & sinkron sekarang</button></form></div>')
         has_pdf = (kb_dir / "ratecard.pdf").exists()
         rc = (f'<div class="card"><h2>File rate card (PDF)</h2><p class="muted">Dikirim bot ke brand yang belum menyebut talent tertentu. '
               f'{"✅ Sudah ada. " if has_pdf else "Belum ada. "}</p>{upload("/pengetahuan/ratecard", "Upload PDF", ".pdf")}</div>')
@@ -120,7 +142,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                 f'<div class="card"><h2>Kalimat bot</h2><p class="muted">Dikirim bot apa adanya. {{sla}} diganti dengan janji waktu balas '
                 f'dari Pengaturan; {{names}} dengan nama talent.</p>{texts_html}</div>'
                 f'<button type="submit" {dis}>Simpan</button></form>')
-        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{kol}{cal}{rc}{faq}{rest}'
+        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{kol}{gcal}{cal}{rc}{faq}{rest}'
 
     @r.get("/pengetahuan/contoh.xlsx")
     def example(request: Request):
@@ -163,6 +185,25 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
             return back("File tidak bisa dibaca. Pakai .xlsx atau .csv.", False)
         n, problems = tl.import_availability(ui.store, rows, user.key)
         return back(f"{n} periode jadwal tersimpan." + (" Catatan: " + "; ".join(problems[:5]) if problems else ""), not problems)
+
+    @r.post("/pengetahuan/kalender")
+    async def calendars(request: Request):
+        user = who(request)
+        manager(user)
+        f = await form(request)
+        urls = [u.strip() for u in str(f.get("urls", "")).split() if u.strip()]
+        bad = [u for u in urls if not u.startswith("https://")]
+        if bad:
+            return back("Alamat kalender harus diawali https://", False)
+        if f.get("clear"):
+            kb.set("calendar_urls", [], user.key)
+        elif urls:
+            kb.set("calendar_urls", urls, user.key)
+        from . import calendar_sync
+        st = calendar_sync.sync(ui.store, ui.cfg().tz)
+        ok = not st["errors"]
+        return back(f"Sinkron: {st['events']} acara, {st['matched']} cocok dengan talent." +
+                    (" " + "; ".join(st["errors"][:3]) if st["errors"] else ""), ok)
 
     @r.post("/pengetahuan/ratecard")
     async def ratecard_upload(request: Request):

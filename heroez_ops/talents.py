@@ -22,7 +22,8 @@ from .doctemplate import BULAN
 from .phone import normalize
 from .terbilang import parse_amount, rupiah
 
-PRIVATE = re.compile(r"(hp|phone|telp|telepon|wa\b|whatsapp|no\.? ?wa|handler|pic|internal|private|rahasia|email|rekening|bank|npwp|ktp|nik|alamat)", re.I)
+PRIVATE = re.compile(r"(hp|phone|telp|telepon|wa\b|whatsapp|no\.? ?wa|handler|pic|internal|private|rahasia|email|rekening|bank|npwp|ktp|nik|alamat|kalender|calendar|ical)", re.I)
+CALENDAR = re.compile(r"(kalender|calendar|ical)", re.I)
 NAME = re.compile(r"^(nama|name|talent|kol)( talent| kol)?$", re.I)
 RATE = re.compile(r"(rate|harga|fee|tarif)", re.I)
 FOLLOW = re.compile(r"(follower|subscriber|subs)", re.I)
@@ -77,12 +78,13 @@ def import_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[i
     problems, talents = [], []
     if not rows:
         return 0, ["File kosong."]
-    header = list(rows[0].keys())
+    header = list(dict.fromkeys(k for r in rows for k in r))   # every column in the file
     name_col = next((h for h in header if NAME.match(h.strip())), None)
     if not name_col:
         return 0, ["Kolom nama tidak ditemukan (beri judul kolom “Nama”)."]
     phone_col = next((h for h in header if PHONE.search(h)), None)
     handler_col = next((h for h in header if HANDLER.match(h.strip())), None)
+    cal_col = next((h for h in header if CALENDAR.search(h)), None)
     for i, r in enumerate(rows, start=2):
         name = r.get(name_col, "").strip()
         if not name:
@@ -102,13 +104,15 @@ def import_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[i
                 public[h] = v
         talents.append((name, json.dumps({"info": public, "rates": rates}, ensure_ascii=False),
                         normalize(r.get(phone_col, ""), local=True) if phone_col else "",
-                        (r.get(handler_col, "") or "").strip() if handler_col else ""))
+                        (r.get(handler_col, "") or "").strip() if handler_col else "",
+                        (r.get(cal_col, "") or "").strip() if cal_col else ""))
     with store.tx():
         store.x("DELETE FROM talents")
-        for name, data, phone, handler in talents:
-            store.x("INSERT INTO talents(name,data,phone,handler,updated_at) VALUES(?,?,?,?,?)",
-                    (name, data, phone, handler, int(time.time())))
+        for name, data, phone, handler, cal in talents:
+            store.x("INSERT INTO talents(name,data,phone,handler,calendar_url,updated_at) VALUES(?,?,?,?,?,?)",
+                    (name, data, phone, handler, cal, int(time.time())))
         store.x("DELETE FROM talent_busy WHERE talent_id NOT IN (SELECT id FROM talents)")
+        store.x("DELETE FROM kv WHERE key='calendar_last_try'")
     store.audit(who, "talents_import", None, {"count": len(talents)})
     return len(talents), problems
 
@@ -118,7 +122,7 @@ def import_availability(store: Store, rows: list[dict[str, str]], who: str) -> t
     problems = []
     if not rows:
         return 0, ["File kosong."]
-    header = list(rows[0].keys())
+    header = list(dict.fromkeys(k for r in rows for k in r))   # every column in the file
     name_col = next((h for h in header if NAME.match(h.strip()) or re.search(r"talent|kol|nama", h, re.I)), None)
     start_col = next((h for h in header if re.search(r"mulai|start|dari|from|tanggal", h, re.I)), None)
     end_col = next((h for h in header if re.search(r"selesai|end|sampai|until|to$", h, re.I) and h != start_col), None)
@@ -140,9 +144,9 @@ def import_availability(store: Store, rows: list[dict[str, str]], who: str) -> t
         else:
             periods.append((tid, start.isoformat(), end.isoformat()))
     with store.tx():
-        store.x("DELETE FROM talent_busy")
+        store.x("DELETE FROM talent_busy WHERE source='upload'")        # Google Calendar dates are kept
         for p in periods:
-            store.x("INSERT INTO talent_busy(talent_id,start,end) VALUES(?,?,?)", p)
+            store.x("INSERT INTO talent_busy(talent_id,start,end,source) VALUES(?,?,?,'upload')", p)
     store.audit(who, "availability_import", None, {"periods": len(periods)})
     return len(periods), problems
 
@@ -256,6 +260,34 @@ def recommend(store: Store, category: str, platforms: list[str], dates: tuple[dt
         if dates and not available(store, r["id"], *dates):
             continue
         picks.append((_followers(d["info"]), r))
+    picks.sort(key=lambda p: -p[0])
+    return [r for _, r in picks[:limit]]
+
+
+def _niche_words(info: dict) -> set[str]:
+    words = set()
+    for k, v in info.items():
+        if re.search(r"niche|kategori|category|genre|topik|topic", k, re.I):
+            words |= {w.strip().lower() for w in re.split(r"[,/;&]| dan ", str(v)) if w.strip()}
+    return words
+
+
+def alternatives(store: Store, unavailable: list, category: str, dates: tuple[dt.date, dt.date],
+                 exclude: set[int], limit: int = 3) -> list:
+    """Cross-sell: KOLs in the same niche (or the brand's category) who ARE free on those dates."""
+    wanted = set(CATEGORY_WORDS.get(category, []))
+    for r in unavailable:
+        wanted |= _niche_words(json.loads(r["data"])["info"])
+    if not wanted:
+        return []
+    picks = []
+    for r in store.q("SELECT id, name, data FROM talents"):
+        if r["id"] in exclude or not available(store, r["id"], *dates):
+            continue
+        info = json.loads(r["data"])["info"]
+        text = " ".join(str(v) for v in info.values()).lower()
+        if _niche_words(info) & wanted or any(w in text for w in wanted):
+            picks.append((_followers(info), r))
     picks.sort(key=lambda p: -p[0])
     return [r for _, r in picks[:limit]]
 

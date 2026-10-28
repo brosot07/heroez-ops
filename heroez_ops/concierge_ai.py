@@ -31,11 +31,12 @@ SCHEMA = {
         "date_start": {"type": "string"},
         "date_end": {"type": "string"},
         "budget_idr": {"type": "integer"},
+        "asks_specific_time": {"type": "boolean"},
         "needs_human": {"type": "boolean"},
         "summary_id": {"type": "string"},
     },
     "required": ["kind", "lang", "brand_name", "campaign", "talents", "category", "platforms", "date_start",
-                 "date_end", "budget_idr", "needs_human", "summary_id"],
+                 "date_end", "budget_idr", "asks_specific_time", "needs_human", "summary_id"],
     "additionalProperties": False,
 }
 
@@ -52,6 +53,7 @@ class Understanding:
     date_start: str = ""
     date_end: str = ""
     budget_idr: int = 0
+    asks_specific_time: bool = False
     needs_human: bool = False
     summary_id: str = ""
 
@@ -65,8 +67,8 @@ class Understanding:
                 out.platforms = list(dict.fromkeys(self.platforms + v))
             elif k == "kind":
                 out.kind = v if self.kind in ("unclear", "") else self.kind
-            elif k == "needs_human":
-                out.needs_human = self.needs_human or v
+            elif k in ("needs_human", "asks_specific_time"):
+                setattr(out, k, getattr(self, k) or v)
             elif v not in ("", 0, "unknown", None):
                 setattr(out, k, v)
         return out

@@ -11,7 +11,7 @@ from heroez_ops.concierge_ai import Understanding
 from heroez_ops.db import Store
 from heroez_ops.service import Service
 from heroez_ops.sources.meta_send import MetaSender
-from heroez_ops.states import AWAITING_THEM, AWAITING_US, CLOSED
+from heroez_ops.states import AWAITING_US, CLOSED
 
 from .conftest import ts, wib
 
@@ -177,26 +177,49 @@ def test_private_columns_and_booking_details_never_reach_ai_context(bot):
     assert "Dewi Lestari" in ctx and "Rp15.000.000" in ctx and "10–12 November 2026" in ctx
     for secret in ("0812", "minta DP", "RahasiaCorp", "budi"):
         assert secret not in ctx
-    assert set(svc.store.q("SELECT * FROM talent_busy")[0].keys()) == {"talent_id", "start", "end"}
+    assert set(svc.store.q("SELECT * FROM talent_busy")[0].keys()) == {"talent_id", "start", "end", "source"}
 
 
-def test_draft_send_needs_confirmation_and_sends_via_api(bot):
-    svc, wire, ch = bot({})
+def test_alert_has_no_send_or_not_ours_buttons(bot):
+    svc, _, ch = bot({})
     svc.engine.ai_enabled = False
-    svc.process_payload(fixtures.history({"628999": [("out", "Halo kak", ts(T0) - 86400 * 40)]}))  # existing client
+    svc.process_payload(fixtures.history({"628999": [("out", "Halo kak", ts(T0) - 86400 * 40)]}))
     svc.process_payload(fixtures.inbound("628999", "Kak Dewi available 20 Nov?", ts(T0), msg_id="wamid.Q1"))
     svc.store.x("UPDATE conversations SET draft_text=?, draft_msg_id=?, draft_can_answer=1 WHERE wa_id=?",
                 ("Halo kak, Dewi tersedia 20 November 🙏", "wamid.Q1", "628999"))
-    cb = lambda data: svc.bot.handle_update({"callback_query": {"id": "c", "from": {"id": 1001}, "data": data,
-                                             "message": {"message_id": 5, "chat": {"id": 1001}, "text": "x"}}}, T0)
-    cb("send:628999")
-    confirm = [m for m in ch.sent if m["op"] == "send"][-1]
-    assert "Kirim pesan ini" in confirm["text"] and wire.sent == []
-    ok_data = next(b for row in confirm["buttons"] for b in row if b.startswith("✅"))
-    # buttons in the shadow log only keep labels; rebuild the callback the bot generated
-    import hashlib
-    h = hashlib.sha256("Halo kak, Dewi tersedia 20 November 🙏".encode()).hexdigest()[:8]
-    cb(f"sendok:628999:{h}")
-    assert wire.texts() == ["Halo kak, Dewi tersedia 20 November 🙏"]
-    assert conv(svc, "628999")["state"] == AWAITING_THEM
-    assert ok_data
+    text, buttons = svc.notifier.render([("628999", "nudge")], T0 + dt.timedelta(minutes=31))
+    labels = [b.text for row in buttons for b in row]
+    assert labels == ["✋ Saya ambil", "✅ Sudah dibalas", "⏰ Tunda 1 jam"]
+    assert "Dewi tersedia 20 November" in text                        # suggestion still shown, to copy
+
+
+def test_unavailable_kol_gets_available_alternatives(bot):
+    msg = "Mau Dewi Lestari untuk IG tgl 10-12 Nov"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="Glowskin", talents=["Dewi Lestari"],
+                                           platforms=["instagram"], date_start="2026-11-10", date_end="2026-11-12")})
+    svc.process_payload(fixtures.inbound("628121", msg, ts(T0)))
+    reply = wire.texts()[-1]
+    assert "Dewi Lestari* (@dewi.lestari): IG Reels Rp15.000.000 — ❌ tidak tersedia" in reply
+    assert "Sebagai alternatif" in reply
+    assert "*Sinta* (@sinta.glow): IG Reels Rp25.000.000 — ✅ tersedia 10–12 November 2026" in reply   # same niche, free
+    assert "Raka" not in reply                                                                         # gaming: not similar
+    assert "alternatif: Sinta" in svc.engine.conversation("628121")["ai_summary"]
+
+
+def test_available_kol_gets_no_cross_sell(bot):
+    msg = "Sinta untuk IG tgl 10-12 Nov bisa?"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", talents=["Sinta"], platforms=["instagram"],
+                                           date_start="2026-11-10", date_end="2026-11-12")})
+    svc.process_payload(fixtures.inbound("628122", msg, ts(T0)))
+    assert "alternatif" not in wire.texts()[-1]
+
+
+def test_specific_hour_request_goes_to_admin(bot):
+    msg = "Sinta bisa live TikTok tgl 10 Nov jam 19.00?"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", talents=["Sinta"], platforms=["tiktok"], date_start="2026-11-10",
+                                           date_end="2026-11-10", asks_specific_time=True)})
+    svc.process_payload(fixtures.inbound("628123", msg, ts(T0)))
+    [reply] = wire.texts()
+    assert reply.startswith("Admin kami akan melanjutkan") and "Rp" not in reply and "tersedia" not in reply
+    assert svc.intake.row("628123")["outcome"] == "minta jam tertentu"
+    assert svc.engine.conversation("628123")["state"] == AWAITING_US

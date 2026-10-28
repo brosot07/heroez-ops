@@ -162,7 +162,7 @@ class Notifier:
         if c and c["draft_text"] and self._draft_current(c):
             reply, missing, can = parse_draft(c)
             if can and reply:
-                draft_line = f"💡 <b>Saran balasan:</b>\n<i>{html.escape(reply)}</i>"
+                draft_line = f"💡 <b>Saran balasan</b> (salin ke WhatsApp jika cocok):\n<i>{html.escape(reply)}</i>"
             elif missing:
                 draft_line = f"💡 AI belum bisa menjawab: {html.escape(missing)}" + (
                     f"\n<i>{html.escape(reply)}</i>" if reply else "")
@@ -174,28 +174,20 @@ class Notifier:
         last = self.store.one("SELECT id FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (c["wa_id"],))
         return bool(last and last["id"] == c["draft_msg_id"])
 
-    def can_send_draft(self, wa_id: str) -> bool:
-        c = self.store.one("SELECT * FROM conversations WHERE wa_id=?", (wa_id,))
-        return bool(c and c["draft_text"] and self._draft_current(c) and parse_draft(c)[0]
-                    and (parse_draft(c)[2] or parse_draft(c)[0]))
-
     def render(self, items: list[tuple[str, str]], now: dt.datetime) -> tuple[str, list[list[Button]]]:
         if len(items) == 1:
             wa_id, step = items[0]
             text = self.item_lines(wa_id, now, step)
             buttons = [
                 [Button("✋ Saya ambil", f"claim:{wa_id}"), Button("✅ Sudah dibalas", f"done:{wa_id}")],
-                [Button("⏰ Tunda 1 jam", f"snooze:{wa_id}"), Button("🚫 Bukan urusan kita", f"nope:{wa_id}")],
+                [Button("⏰ Tunda 1 jam", f"snooze:{wa_id}")],
             ]
-            if self.can_send_draft(wa_id):
-                buttons.append([Button("📤 Kirim saran ini", f"send:{wa_id}")])
             return text, buttons
         blocks = [f"{i}. " + self.item_lines(wa_id, now, step) for i, (wa_id, step) in enumerate(items, 1)]
-        legend = "Tombol: ✋ Saya ambil · ✅ Sudah dibalas · ⏰ Tunda 1 jam · 🚫 Bukan urusan kita · 📤 Kirim saran"
+        legend = "Tombol: ✋ Saya ambil · ✅ Sudah dibalas · ⏰ Tunda 1 jam"
         text = f"<b>{len(items)} chat perlu dibalas</b>\n\n" + "\n\n".join(blocks) + f"\n\n<i>{legend}</i>"
         buttons = [
-            [Button(f"✋{i}", f"claim:{w}"), Button(f"✅{i}", f"done:{w}"), Button(f"⏰{i}", f"snooze:{w}"), Button(f"🚫{i}", f"nope:{w}")]
-            + ([Button(f"📤{i}", f"send:{w}")] if self.can_send_draft(w) else [])
+            [Button(f"✋{i}", f"claim:{w}"), Button(f"✅{i}", f"done:{w}"), Button(f"⏰{i}", f"snooze:{w}")]
             for i, (w, _) in enumerate(items, 1)
         ]
         return text, buttons
