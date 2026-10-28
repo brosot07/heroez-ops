@@ -20,6 +20,7 @@ class Admin:
     name: str
     telegram_id: int
     supervisors: tuple[str, ...] = ()   # supervisor keys; empty = all supervisors
+    email: str = ""                     # for the web pages (contracts) via Cloudflare Access
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Supervisor:
     key: str
     name: str
     telegram_id: int
+    email: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,11 @@ class Config:
     ai_context_messages: int = 8
     ai_wait_minutes: int = 10
     anthropic_api_key: str = ""
+    access_team_domain: str = ""        # Cloudflare Access, e.g. heroez.cloudflareaccess.com
+    access_audience: str = ""           # the Access application's AUD tag
+    pkp: bool = False                   # Heroez charges PPN
+    ppn_rate: float = 0.11              # effective PPN rate (12% x 11/12)
+    contract_number_format: str = "{seq:03d}/HRZ-KTR/{roman_month}/{year}"
     message_text_days: int = 90
     raw_webhook_days: int = 7
     backup_keep: int = 14
@@ -156,7 +163,8 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
     for s in raw.get("supervisors") or []:
         if not s.get("key"):
             raise ConfigError("every supervisor needs a 'key'")
-        supervisors.append(Supervisor(key=s["key"], name=s.get("name", s["key"]), telegram_id=int(s.get("telegram_id") or 0)))
+        supervisors.append(Supervisor(key=s["key"], name=s.get("name", s["key"]), telegram_id=int(s.get("telegram_id") or 0),
+                                      email=str(s.get("email") or "").strip()))
     spv_keys = {s.key for s in supervisors}
 
     admins = []
@@ -168,7 +176,7 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
             if k not in spv_keys:
                 raise ConfigError(f"admin {a['key']!r} lists unknown supervisor {k!r}")
         admins.append(Admin(key=a["key"], name=a.get("name", a["key"]), telegram_id=int(a.get("telegram_id") or 0),
-                            supervisors=own))
+                            supervisors=own, email=str(a.get("email") or "").strip()))
     if not admins:
         raise ConfigError("at least one admin must be listed under 'admins'")
     keys = {a.key for a in admins}
@@ -222,6 +230,12 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         ai_context_messages=int((raw.get("ai") or {}).get("context_messages", 8)),
         ai_wait_minutes=int((raw.get("ai") or {}).get("wait_minutes", 10)),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+        access_team_domain=str((raw.get("access") or {}).get("team_domain", "") or ""),
+        access_audience=str((raw.get("access") or {}).get("audience", "") or ""),
+        pkp=bool((raw.get("tax") or {}).get("pkp", False)),
+        ppn_rate=float((raw.get("tax") or {}).get("ppn_effective_rate", 0.11)),
+        contract_number_format=str((raw.get("contracts") or {}).get("number_format",
+                                                                   "{seq:03d}/HRZ-KTR/{roman_month}/{year}")),
         message_text_days=int((raw.get("retention") or {}).get("message_text_days", 90)),
         raw_webhook_days=int((raw.get("retention") or {}).get("raw_webhook_days", 7)),
         backup_keep=int((raw.get("retention") or {}).get("backup_keep", 14)),

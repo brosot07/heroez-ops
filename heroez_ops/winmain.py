@@ -27,6 +27,7 @@ from . import secrets as secretstore
 from .app import create_app
 from .config import ConfigError, load_config
 from .db import Store
+from .docs_ui import ContractsUI
 from .service import Service
 from .setup_ui import SetupUI
 
@@ -129,17 +130,19 @@ def run_once(home: Path, stop: threading.Event) -> None:
 
     servers = []
     ui = SetupUI(home, store, restart.set, status=status, port=SETUP_PORT)
-    servers.append(_serve(ui.create_app(), SETUP_PORT))
     try:
         cfg = load_config(home / "config" / "config.yaml", base_dir=home)
     except ConfigError as e:
         log.error("config problem, only the settings page is running: %s", e)
         cfg = None
+    contracts = ContractsUI(home, store, lambda: cfg) if cfg else None
+    servers.append(_serve(ui.create_app(contracts.router(local=True) if contracts else None), SETUP_PORT))
     if cfg:
         service = Service(cfg, store, data_dir=home / "data")
         for p in service.engine.load_roster():
             log.warning("roster: %s", p)
-        servers.append(_serve(create_app(cfg, store, service, run_background=True), WEBHOOK_PORT))
+        servers.append(_serve(create_app(cfg, store, service, run_background=True,
+                                         extra_routers=(contracts.router(local=False),)), WEBHOOK_PORT))
         tunnel.start()
         log.info("running in %s mode; settings at http://127.0.0.1:%d", cfg.mode, SETUP_PORT)
 

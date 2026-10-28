@@ -24,27 +24,12 @@ from . import secrets as secretstore
 from .ai import month_cost
 from .alerts.telegram import TelegramAlertChannel
 from .config import ConfigError, load_config
+from .ui_common import CSS
 from .db import Store
 
 MAX_ADMINS, MAX_SPV = 6, 4
 DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
-CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--ink:#1d2330;--muted:#5d6675;--line:#dde1e7;--accent:#1f6feb;--ok:#1a7f37;--bad:#cf222e}
-@media (prefers-color-scheme: dark){:root{--bg:#0f1218;--card:#171b23;--ink:#e6e9ef;--muted:#9aa3b2;--line:#2a303b;--accent:#4c8dff;--ok:#3fb950;--bad:#f85149}}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:16px 0}
-label{display:block;font-weight:600;margin:10px 0 4px}small,.muted{color:var(--muted);font-weight:400}
-input[type=text],input[type=password],input[type=number],input[type=time]{width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
-table{width:100%;border-collapse:collapse}td,th{padding:6px 4px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:600px){.row{grid-template-columns:1fr}}
-button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:10px 16px;font-weight:600;cursor:pointer}
-button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
-.msg{padding:10px 12px;border-radius:6px;margin:12px 0}.ok{background:color-mix(in srgb,var(--ok) 15%,transparent)}.bad{background:color-mix(in srgb,var(--bad) 15%,transparent)}
-code{background:var(--bg);padding:2px 5px;border-radius:4px}
-"""
 
 
 def _e(v) -> str:
@@ -99,13 +84,15 @@ class SetupUI:
         spvs = []
         for j in range(1, MAX_SPV + 1):
             if g(f"s{j}_name"):
-                spvs.append({"key": f"spv{j}", "name": g(f"s{j}_name"), "telegram_id": num(f"s{j}_tg")})
+                spvs.append({"key": f"spv{j}", "name": g(f"s{j}_name"), "telegram_id": num(f"s{j}_tg"),
+                             "email": g(f"s{j}_email").lower()})
         spv_keys = {s["key"] for s in spvs}
         admins = []
         for i in range(1, MAX_ADMINS + 1):
             if g(f"a{i}_name"):
                 own = [f"spv{j}" for j in range(1, MAX_SPV + 1) if form.get(f"a{i}_spv{j}") and f"spv{j}" in spv_keys]
-                admins.append({"key": f"admin{i}", "name": g(f"a{i}_name"), "telegram_id": num(f"a{i}_tg"), "supervisors": own})
+                admins.append({"key": f"admin{i}", "name": g(f"a{i}_name"), "telegram_id": num(f"a{i}_tg"), "supervisors": own,
+                               "email": g(f"a{i}_email").lower()})
         raw["admins"], raw["supervisors"] = admins, spvs
         raw["on_call_rotation"] = [a["key"] for a in admins]
 
@@ -122,6 +109,12 @@ class SetupUI:
         wh["start"], wh["end"] = bh["start"], g("work_end", "18:30")
 
         raw.setdefault("ai", {})["enabled"] = bool(form.get("ai_enabled"))
+        raw.setdefault("tax", {})["pkp"] = bool(form.get("pkp"))
+        if g("number_format"):
+            raw.setdefault("contracts", {})["number_format"] = g("number_format")
+        acc = raw.setdefault("access", {})
+        acc["team_domain"] = g("access_team").removeprefix("https://").strip("/")
+        acc["audience"] = g("access_aud")
 
         esc = raw.setdefault("escalation", {})
         for k, field in (("nudge", "nudge_assignee_after_business_min"), ("group", "alert_group_after_business_min"),
@@ -191,10 +184,12 @@ class SetupUI:
                 f'<td><input type="checkbox" name="a{i}_spv{j}" {"checked" if f"spv{j}" in (a.get("supervisors") or []) else ""}></td>'
                 for j in range(1, MAX_SPV + 1) if f"spv{j}" in spvs)
             admin_rows += (f'<tr><td><input type="text" name="a{i}_name" value="{_e(a.get("name"))}" placeholder="Nama admin {i}"></td>'
-                           f'<td><input type="text" name="a{i}_tg" value="{_e(a.get("telegram_id") or "")}" placeholder="ID Telegram"></td>{checks}</tr>')
+                           f'<td><input type="text" name="a{i}_tg" value="{_e(a.get("telegram_id") or "")}" placeholder="ID Telegram"></td>'
+                           f'<td><input type="email" name="a{i}_email" value="{_e(a.get("email"))}" placeholder="email kerja"></td>{checks}</tr>')
         spv_rows = "".join(
             f'<tr><td><input type="text" name="s{j}_name" value="{_e((spvs.get(f"spv{j}") or {}).get("name"))}" placeholder="Nama supervisor {j}"></td>'
-            f'<td><input type="text" name="s{j}_tg" value="{_e((spvs.get(f"spv{j}") or {}).get("telegram_id") or "")}" placeholder="ID Telegram"></td></tr>'
+            f'<td><input type="text" name="s{j}_tg" value="{_e((spvs.get(f"spv{j}") or {}).get("telegram_id") or "")}" placeholder="ID Telegram"></td>'
+            f'<td><input type="email" name="s{j}_email" value="{_e((spvs.get(f"spv{j}") or {}).get("email"))}" placeholder="email kerja"></td></tr>'
             for j in range(1, MAX_SPV + 1))
         days = "".join(f'<label style="display:inline;font-weight:400;margin-right:10px"><input type="checkbox" name="day{d}" '
                        f'{"checked" if d in (bh.get("days") or []) else ""}> {DAYS[d]}</label>' for d in range(7))
@@ -221,7 +216,8 @@ class SetupUI:
                 ai_status += " · ⚠️ API key ditolak, cek lagi"
 
         return f"""<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Heroez Ops Settings</title><style>{CSS}</style></head><body><main>
+<title>Heroez Ops Settings</title><style>{CSS}</style></head><body>
+<nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/" class="on">Pengaturan</a></nav><main>
 <h1>Heroez Ops: Pengaturan</h1><p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>{msg}
 <div class="card"><h2>Status</h2>
 <p>Mode: <b>{"LIVE (notifikasi dikirim)" if raw.get("mode") == "live" else "SHADOW (hanya dicatat, belum dikirim)"}</b><br>
@@ -241,11 +237,11 @@ AI (Claude): <b>{ai_status}</b></p>
 <input type="password" name="telegram_bot_token" autocomplete="off">
 <p class="muted">Orang yang baru kirim /start ke bot (salin ID-nya ke tabel di bawah):</p><ul>{newcomer_html}</ul></div>
 
-<div class="card"><h2>3. Supervisor</h2><table><tr><th>Nama</th><th>ID Telegram</th></tr>{spv_rows}</table>
+<div class="card"><h2>3. Supervisor</h2><table><tr><th>Nama</th><th>ID Telegram</th><th>Email <small>(login halaman kontrak)</small></th></tr>{spv_rows}</table>
 <p class="muted">Simpan dulu setelah menambah supervisor baru, lalu centang supervisor untuk tiap admin.</p></div>
 
 <div class="card"><h2>4. Admin</h2><p class="muted">Centang supervisor yang ikut menerima eskalasi admin itu. Tidak dicentang = semua supervisor.</p>
-<table><tr><th>Nama</th><th>ID Telegram</th>{spv_head}</tr>{admin_rows}</table></div>
+<table><tr><th>Nama</th><th>ID Telegram</th><th>Email</th>{spv_head}</tr>{admin_rows}</table></div>
 
 <div class="card"><h2>5. Jam kerja & pengingat</h2>{days}
 <div class="row"><div><label>Mulai kerja & notifikasi</label><input type="time" name="start" value="{_e(bh.get("start", "09:30"))}"></div>
@@ -270,7 +266,18 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
 <label>Claude API key <small>(console.anthropic.com → API keys) · {has("ANTHROPIC_API_KEY")}</small></label>
 <input type="password" name="anthropic_api_key" autocomplete="off"></div>
 
-<div class="card"><h2>7. WhatsApp & koneksi</h2>
+<div class="card"><h2>7. Kontrak</h2>
+<label style="font-weight:400"><input type="checkbox" name="pkp" {"checked" if (raw.get("tax") or {}).get("pkp") else ""}> Heroez adalah PKP (kontrak/invoice menghitung PPN 11%)</label>
+<label>Format nomor kontrak <small>({{seq:03d}} = urutan per tahun, {{roman_month}} = XI, {{year}} = 2026)</small></label>
+<input type="text" name="number_format" value="{_e((raw.get("contracts") or {}).get("number_format", "{seq:03d}/HRZ-KTR/{roman_month}/{year}"))}">
+<label>Login dari laptop lain: Cloudflare Access team domain <small>(mis. heroez.cloudflareaccess.com)</small></label>
+<input type="text" name="access_team" value="{_e((raw.get("access") or {}).get("team_domain", ""))}">
+<label>Cloudflare Access Application Audience (AUD) tag</label>
+<input type="text" name="access_aud" value="{_e((raw.get("access") or {}).get("audience", ""))}">
+<p class="muted">Tanpa ini, halaman Kontrak hanya bisa dibuka dari komputer ini. Halaman kontrak dari laptop lain:
+<code>https://{_e(host) or "alamat-publik"}/kontrak</code></p></div>
+
+<div class="card"><h2>8. WhatsApp & koneksi</h2>
 <label>Nomor WhatsApp Heroez <small>(dengan kode negara, mis. 62812…)</small></label><input type="text" name="business_number" value="{_e((raw.get("whatsapp") or {}).get("business_number", ""))}">
 <label>Meta App Secret <small>· {has("META_APP_SECRET")}</small></label><input type="password" name="meta_app_secret" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">
@@ -300,9 +307,19 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
         return all(r.endswith("terkirim") for r in results), " · ".join(results) or "Belum ada admin/supervisor."
 
     # -- app ------------------------------------------------------------
-    def create_app(self) -> FastAPI:
+    def create_app(self, extra_router=None) -> FastAPI:
         app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
         allowed_hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}", "127.0.0.1", "localhost", "testserver"}
+
+        @app.middleware("http")
+        async def local_only(request: Request, call_next):
+            # Blocks DNS rebinding for every page on this local app, including the contract pages.
+            if request.headers.get("host", "") not in allowed_hosts:
+                return HTMLResponse("Forbidden", status_code=403)
+            return await call_next(request)
+
+        if extra_router is not None:
+            app.include_router(extra_router)
 
         def guard(request: Request) -> None:
             # Blocks DNS-rebinding: the page must be opened as 127.0.0.1/localhost.

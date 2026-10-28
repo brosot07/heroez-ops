@@ -83,6 +83,19 @@ ai:
   context_messages: 8             # how many recent messages the AI reads
   wait_minutes: 10                # alerts wait this long for the AI check; then rules decide
 
+tax:
+  pkp: false                 # true = Heroez is PKP and charges PPN (confirm with your accountant)
+  ppn_effective_rate: 0.11   # 12% x DPP 11/12
+
+contracts:
+  # {seq} counts up each year; {roman_month} = XI; {year} = 2026; {month} = 11
+  number_format: "{seq:03d}/HRZ-KTR/{roman_month}/{year}"
+
+access:
+  # Cloudflare Access protects the contract pages for laptops other than this PC.
+  team_domain: ""            # e.g. heroez.cloudflareaccess.com
+  audience: ""               # Application Audience (AUD) tag from the Access application
+
 retention:
   message_text_days: 90   # message texts are erased after this many days (UU PDP); states and metrics stay
   raw_webhook_days: 7     # raw webhook payloads (contain message text) are deleted after this

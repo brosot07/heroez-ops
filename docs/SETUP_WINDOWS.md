@@ -39,6 +39,22 @@ Expected cost: about US$1–5 per month. Without a key, the word rules alone dec
 Privacy: the last ~8 messages of a chat (long numbers masked) are sent to Anthropic's API to be classified.
 Mention this in the data-flow note for clients and talents.
 
+## 3c. Contracts (approved templates only)
+1. On the host PC open *Heroez Ops – Pengaturan* → **Template** → upload the lawyer-approved `.docx` and give it a name.
+2. The AI marks the parts that change per client (about 1–2 minutes). Check the yellow parts in **Cek dokumen**:
+   each must cover the whole value, and no old client data may remain outside them. Fix with the field list or
+   *Tambah field manual*. The page only lets you approve once the self-check is green.
+3. Click **Setujui & pakai template ini**. Only approved templates can be used; editing one sends it back for approval.
+4. **Kontrak** → choose the template → fill in client details, SOW rows and fees → **Simpan & buat dokumen** → download Word.
+   Totals left blank are added up from the SOW rows; PPN follows the PKP setting (section 7).
+5. Contracts from a client's own paper stay outside the app.
+
+**From other laptops (optional):** in Cloudflare Zero Trust → *Access* → *Applications* → add a *Self-hosted* app for
+`ops.heroez.id` with paths `/kontrak` and `/template`, policy *Allow* → *Emails* → the admins' and supervisors' work emails
+(login by one-time email code). Copy the team domain and the **Application Audience (AUD) tag** into section 7 of the
+settings page, and fill in everyone's email in sections 3 and 4. Admins can make contracts; only supervisors (and this PC)
+can upload or approve templates. Never add `/webhook/*` to the Access app (Meta and Telegram must reach it).
+
 ## 4. Meta (WhatsApp)
 Follow `SETUP_RUNBOOK.md` for the Meta app and coexistence onboarding. In the Meta app's WhatsApp → Configuration:
 - **Callback URL** and **Verify token**: copy them from the top of our settings page.

@@ -118,6 +118,31 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     usd REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (day, model)
 );
+CREATE TABLE IF NOT EXISTS contract_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,                    -- analyzing | review | approved | archived | failed
+    spec TEXT,                               -- fields JSON (see doctemplate.py)
+    notes TEXT,                              -- AI notes / problems, JSON list
+    check_ok INTEGER NOT NULL DEFAULT 0,
+    check_msg TEXT,
+    created_at INTEGER NOT NULL,
+    created_by TEXT,
+    approved_at INTEGER,
+    approved_by TEXT
+);
+CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER NOT NULL,
+    number TEXT NOT NULL,
+    client_name TEXT,
+    total INTEGER,
+    data TEXT NOT NULL,                      -- {"values": {...}, "rows": [...]}
+    created_at INTEGER NOT NULL,
+    created_by TEXT,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

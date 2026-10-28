@@ -55,7 +55,7 @@ def start_background(service: Service, stop: threading.Event) -> list[threading.
 
 
 def create_app(cfg: Config | None = None, store: Store | None = None, service: Service | None = None,
-               run_background: bool = True) -> FastAPI:
+               run_background: bool = True, extra_routers: tuple = ()) -> FastAPI:
     cfg = cfg or load_config(os.environ.get("HEROEZ_CONFIG", "config/config.yaml"))
     store = store or Store(os.environ.get("HEROEZ_DB", "data/heroez.db"))
     service = service or Service(cfg, store, data_dir=Path(os.environ.get("HEROEZ_DB", "data/heroez.db")).parent)
@@ -71,6 +71,8 @@ def create_app(cfg: Config | None = None, store: Store | None = None, service: S
 
     app = FastAPI(title="Heroez Ops", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.service, app.state.store, app.state.cfg = service, store, cfg
+    for router in extra_routers:
+        app.include_router(router)
 
     @app.get("/webhook/meta")
     def meta_verify(request: Request):
