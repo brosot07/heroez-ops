@@ -140,3 +140,44 @@ def test_queue_page_and_actions(setup):
     assert r.status_code == 303
     assert "Tidak ada chat" in client.get("/antrian").text
     assert client.post("/antrian/aksi", data={"wa": "628111", "aksi": "dibalas"}).status_code == 403   # csrf required
+
+
+def test_csrf_token_is_per_user(setup):
+    ui, client = setup
+    owner_token = ui.csrf
+    import heroez_ops.docs_ui as mod
+    from fastapi import FastAPI as _F
+    app = _F()
+    app.include_router(ui.router(local=False))
+    admin = User("rina@heroez.id", "Rina", "admin", "rina")
+    orig = mod.remote_user
+    mod.remote_user = lambda request, cfg, verifier: admin
+    try:
+        c = TestClient(app)
+        page = c.get("/kontrak").text
+        assert owner_token not in page                                   # an admin never sees the owner's token
+        r = c.post("/antrian/aksi", data={"csrf": owner_token, "wa": "x", "aksi": "dibalas"})
+        assert r.status_code == 403
+    finally:
+        mod.remote_user = orig
+
+
+def test_archived_template_cannot_be_used_for_new_contracts(setup):
+    ui, client = setup
+    tid = upload_and_wait(ui, client)
+    client.post(f"/template/{tid}/setujui", data={"csrf": ui.csrf})
+    client.post(f"/template/{tid}/arsip", data={"csrf": ui.csrf})
+    r = client.post("/kontrak/simpan", data={"csrf": ui.csrf, "tid": tid, "cid": 999, "f_client_name": "X"})
+    assert r.status_code == 404
+    assert not (ui.cdir / "999.docx").exists()
+
+
+def test_zip_bomb_upload_refused(setup):
+    import io
+    import zipfile
+    ui, client = setup
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", b"\0" * (30 * 1024 * 1024))
+    r = client.post("/template/upload", data={"csrf": ui.csrf, "name": "bomb"}, files={"file": ("b.docx", buf.getvalue())})
+    assert r.status_code == 400 and "terlalu besar" in r.text

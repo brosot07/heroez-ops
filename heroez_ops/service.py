@@ -41,7 +41,8 @@ class Service:
         self.engine = Engine(cfg, store)
         self.classifier = classifier
         if self.classifier is None and cfg.ai_enabled and cfg.anthropic_api_key:
-            self.classifier = ClaudeClassifier(cfg.anthropic_api_key, store, model=cfg.ai_model)
+            self.classifier = ClaudeClassifier(cfg.anthropic_api_key, store, model=cfg.ai_model,
+                                               daily_cap=cfg.ai_max_calls_per_day)
         self.engine.ai_enabled = self.classifier is not None
         telegram = TelegramAlertChannel(cfg.telegram_bot_token) if cfg.telegram_bot_token else None
         self.telegram = telegram
@@ -60,7 +61,8 @@ class Service:
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
         concierge = None
         if cfg.intake_enabled and cfg.anthropic_api_key and self.classifier is not None:
-            concierge = ConciergeAI(cfg.anthropic_api_key, store, cfg.tz, model=cfg.ai_model)
+            concierge = ConciergeAI(cfg.anthropic_api_key, store, cfg.tz, model=cfg.ai_model,
+                                    daily_cap=cfg.ai_max_calls_per_day)
         self.intake = Intake(cfg, store, self.engine, self.kb, self.sender, shadow_dir / "kb", ai=concierge)
         self.drafter = drafter
         if self.drafter is None and cfg.drafts_enabled and cfg.anthropic_api_key:
@@ -70,6 +72,7 @@ class Service:
             self.notifier.before_alert = self.drafter.ensure
         reply_notifier = Notifier(cfg, store, self.clock, self.reply_channel)
         self.bot = Bot(cfg, store, self.engine, reply_notifier, self.reply_channel, intake=self.intake)
+        self.bot.service = self
 
     # -- ingest -----------------------------------------------------------
     def accept_webhook(self, source: str, body: bytes) -> None:
@@ -183,7 +186,23 @@ class Service:
             (now_ts - self.cfg.message_text_days * 86400,)).rowcount
         pruned = self.store.x("DELETE FROM inbox WHERE processed_at IS NOT NULL AND processed_at < ?",
                               (now_ts - self.cfg.raw_webhook_days * 86400,)).rowcount
+        cutoff = now_ts - self.cfg.message_text_days * 86400
+        self.store.x("DELETE FROM sent_batches WHERE sent_at < ?", (cutoff,))
+        self.store.x("UPDATE intake SET data='{}' WHERE updated_at < ? AND status != 'active'", (cutoff,))
+        self.store.x("UPDATE conversations SET ai_summary=NULL, draft_text=NULL, draft_msg_id=NULL "
+                     "WHERE updated_at < ? AND state != 'AWAITING_US'", (cutoff,))
+        self.store.x("UPDATE state_changes SET reason='(kedaluwarsa)' WHERE at < ? AND reason != '(kedaluwarsa)'", (cutoff,))
+        self.store.x("DELETE FROM message_links WHERE msg_id IN (SELECT id FROM messages WHERE ts < ?)", (cutoff,))
+        self.store.x("DELETE FROM link_checks WHERE checked_at < ?", (now_ts - 7 * 86400,))
+        self.store.x("UPDATE audit_log SET detail=NULL WHERE at < ? AND detail IS NOT NULL", (now_ts - 365 * 86400,))
         self.store.audit("system", "retention", None, {"texts_erased": erased, "raw_deleted": pruned}, now_ts)
+        if self.data_dir:
+            self._prune_shadow_log(self.data_dir / "shadow_alerts.jsonl", cutoff)
+            if local.day == 1:
+                try:
+                    self.store.vacuum()
+                except Exception:
+                    log.exception("vacuum failed")
         if self.data_dir:
             backups = self.data_dir / "backups"
             try:
@@ -192,6 +211,31 @@ class Service:
                     old.unlink()
             except Exception:
                 log.exception("daily backup failed")
+
+    @staticmethod
+    def _prune_shadow_log(path: Path, cutoff: int) -> None:
+        """Keep only recent lines of the shadow log (it holds message snippets)."""
+        if not path.exists():
+            return
+        try:
+            keep = []
+            with path.open(encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        if int(json.loads(line).get("at", 0)) >= cutoff:
+                            keep.append(line)
+                    except (ValueError, AttributeError):
+                        continue
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text("".join(keep), encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            log.exception("could not prune shadow log")
+
+    def forget_number(self, wa_id: str, who: str) -> dict:
+        counts = self.store.forget_number(wa_id)
+        self.store.audit(who, "forget_number", None, {"tables": {k: v for k, v in counts.items() if v}})
+        return counts
 
     def check_quiet_inbox(self, now: dt.datetime, quiet_hours: int = 3) -> None:
         """Warn management once if no webhooks arrived for hours during business time."""

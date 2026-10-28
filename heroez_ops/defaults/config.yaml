@@ -95,6 +95,7 @@ ai:
   min_confidence_to_close: 0.75   # AI must be this sure before it closes a chat (no alert)
   context_messages: 8             # how many recent messages the AI reads
   wait_minutes: 10                # alerts wait this long for the AI check; then rules decide
+  max_calls_per_day: 3000         # safety cap on AI calls (a flood of messages cannot run up the bill)
 
 tax:
   pkp: false                 # true = Heroez is PKP and charges PPN (confirm with your accountant)

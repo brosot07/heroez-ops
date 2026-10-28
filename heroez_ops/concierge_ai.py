@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .ai import PRICES
+from .ai import PRICES, over_daily_cap
 from .db import Store
 from .textrules import redact
 
@@ -83,14 +83,16 @@ class Understanding:
 
 
 class ConciergeAI:
-    def __init__(self, api_key: str, store: Store, tz, model: str = "claude-haiku-5-5", client=None):
+    def __init__(self, api_key: str, store: Store, tz, model: str = "claude-haiku-5-5", client=None, daily_cap: int = 3000):
         if client is None:
             import anthropic
             client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=2)
-        self.client, self.store, self.tz, self.model = client, store, tz, model
+        self.client, self.store, self.tz, self.model, self.daily_cap = client, store, tz, model, daily_cap
 
     def understand(self, messages: list[str]) -> Understanding | None:
         import anthropic
+        if over_daily_cap(self.store, self.daily_cap):
+            return None
         today = dt.datetime.now(self.tz).date()
         chat = "\n".join(f"KLIEN: {redact(m)[:1500]}" for m in messages[-6:])
         try:

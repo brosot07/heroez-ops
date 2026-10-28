@@ -14,7 +14,9 @@ import argparse
 import logging
 import logging.handlers
 import os
+import secrets as pysecrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -53,6 +55,11 @@ def ensure_home(home: Path) -> None:
     roster = home / "data" / "talent_roster.csv"
     if not roster.exists():
         roster.write_text("name,phone,handler\n", encoding="utf-8")
+    # First start without an owner password: generate one (the Windows installer normally does this).
+    if not (home / "config" / "owner.json").exists() and not (home / "initial_password.txt").exists():
+        pw = pysecrets.token_urlsafe(9)
+        (home / "initial_password.txt").write_text(pw + "\n", encoding="utf-8")
+        print(f"Initial owner password written to {home / 'initial_password.txt'}")
 
 
 def setup_logging(home: Path) -> None:
@@ -87,7 +94,10 @@ class Tunnel:
             threading.Thread(target=self._loop, name="tunnel", daemon=True).start()
 
     def _loop(self) -> None:
-        env = {**os.environ, "TUNNEL_TOKEN": self.token}
+        keep = ("PATH", "SystemRoot", "SYSTEMROOT", "windir", "TEMP", "TMP", "ProgramData", "LOCALAPPDATA", "APPDATA",
+                "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "SSL_CERT_FILE", "SSL_CERT_DIR", "LANG")
+        env = {k: v for k, v in os.environ.items() if k in keep or k.upper() in keep}   # no API secrets for cloudflared
+        env["TUNNEL_TOKEN"] = self.token
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         while not self.stop.is_set():
             log.info("starting cloudflared")
@@ -109,9 +119,22 @@ class Tunnel:
                 self.proc.kill()
 
 
+def _bind(port: int) -> socket.socket:
+    """Bind exclusively so another local program cannot take or share the port."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(128)
+    return s
+
+
 def _serve(app, port: int) -> tuple[uvicorn.Server, threading.Thread]:
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False))
-    t = threading.Thread(target=server.run, name=f"http-{port}", daemon=True)
+    sock = _bind(port)   # raises OSError if the port is taken: the service must not start half-blind
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
+    t = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, name=f"http-{port}", daemon=True)
     t.start()
     return server, t
 
@@ -136,14 +159,22 @@ def run_once(home: Path, stop: threading.Event) -> None:
         log.error("config problem, only the settings page is running: %s", e)
         cfg = None
     contracts = ContractsUI(home, store, lambda: cfg) if cfg else None
-    servers.append(_serve(ui.create_app(contracts.router(local=True) if contracts else None), SETUP_PORT))
+    try:
+        servers.append(_serve(ui.create_app(contracts.router(local=True) if contracts else None), SETUP_PORT))
+    except OSError as e:
+        log.critical("port %d is taken by another program (%s); stopping so the service restarts cleanly", SETUP_PORT, e)
+        raise SystemExit(2) from e
     if cfg:
         service = Service(cfg, store, data_dir=home / "data")
         for p in service.engine.load_roster():
             log.warning("roster: %s", p)
-        servers.append(_serve(create_app(cfg, store, service, run_background=True,
-                                         extra_routers=(contracts.router(local=False),)), WEBHOOK_PORT))
-        tunnel.start()
+        try:
+            servers.append(_serve(create_app(cfg, store, service, run_background=True,
+                                             extra_routers=(contracts.router(local=False),)), WEBHOOK_PORT))
+        except OSError as e:
+            log.critical("port %d is taken by another program (%s); stopping so the service restarts cleanly", WEBHOOK_PORT, e)
+            raise SystemExit(2) from e
+        tunnel.start()   # only after both ports are ours
         log.info("running in %s mode; settings at http://127.0.0.1:%d", cfg.mode, SETUP_PORT)
 
     while not (restart.is_set() or stop.is_set()):

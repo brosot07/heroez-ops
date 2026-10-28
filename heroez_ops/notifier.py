@@ -141,7 +141,7 @@ class Notifier:
         last = self.store.one(
             "SELECT id, type, text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (wa_id,)
         )
-        name = html.escape((ct["name"] if ct and ct["name"] else "Tanpa nama"))
+        name = html.escape(defang(ct["name"] if ct and ct["name"] else "Tanpa nama"))
         kind = KIND_LABEL.get(ct["kind"] if ct else "new", "Kontak")
         prio = f" · {c['priority']}" if c and c["priority"] else ""
         waited = ""
@@ -166,8 +166,8 @@ class Notifier:
             if can and reply:
                 draft_line = f"💡 <b>Saran balasan</b> (salin ke WhatsApp jika cocok):\n<i>{html.escape(defang(reply))}</i>"
             elif missing:
-                draft_line = f"💡 AI belum bisa menjawab: {html.escape(missing)}" + (
-                    f"\n<i>{html.escape(reply)}</i>" if reply else "")
+                draft_line = f"💡 AI belum bisa menjawab: {html.escape(defang(missing))}" + (
+                    f"\n<i>{html.escape(defang(reply))}</i>" if reply else "")
         link_line = html.escape(link_alert(self.store, last["id"])) if last else ""
         parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet, link_line, draft_line,
                  f'<a href="https://wa.me/{wa_id}">Buka chat</a>']

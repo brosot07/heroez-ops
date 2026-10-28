@@ -136,7 +136,9 @@ class Engine:
     def handle(self, ev: Event) -> Change | None:
         """Store an event and update state. Idempotent: a repeated message id is ignored."""
         if isinstance(ev, ContactEvent):
-            if not ev.removed:
+            if ev.removed:
+                self.store.x("UPDATE contacts SET name=NULL WHERE wa_id=?", (ev.wa_id,))   # deleted from the phone
+            else:
                 self._ensure_contact(ev.wa_id, ev.name, 0)
                 if ev.name:
                     self.store.x("UPDATE contacts SET name=? WHERE wa_id=?", (ev.name, ev.wa_id))

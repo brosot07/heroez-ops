@@ -8,6 +8,10 @@ Two set-ups, usable together:
 Only the dates are kept. Titles, descriptions, locations and guests are read in memory
 to find the KOL and then dropped, so nothing about the work itself is stored. Events
 marked "Free" (transparent) and cancelled events are ignored.
+
+Limits (a broken or hostile feed must not stall the service): https to public hosts
+only, no redirects, 2 MB per feed, repeats finer than daily skipped, at most 5,000
+events per feed, 20 s per feed. The sync runs in its own thread.
 """
 from __future__ import annotations
 
@@ -15,17 +19,25 @@ import datetime as dt
 import json
 import logging
 import re
+import threading
 import time
 
 import httpx
 
 from .db import Store
 from .kb import KB
+from .safety import is_public_https
 
 log = logging.getLogger(__name__)
 
 WINDOW_DAYS = 180
 SYNC_EVERY_SECONDS = 15 * 60
+MAX_FEED_BYTES = 2 * 1024 * 1024
+MAX_EVENTS_PER_FEED = 5000
+FEED_TIME_BUDGET = 20.0
+ALLOWED_FREQ = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
+
+_lock = threading.Lock()
 
 
 def _norm(s: str) -> str:
@@ -46,15 +58,36 @@ def _dates(start, end) -> tuple[dt.date, dt.date]:
     return s, max(s, e)
 
 
+def _drop_fine_rrules(cal) -> int:
+    """Remove repeat rules finer than daily (minutely/hourly expand into huge event sets)."""
+    dropped = 0
+    for ev in cal.walk("VEVENT"):
+        rules = ev.get("RRULE")
+        if not rules:
+            continue
+        rules = rules if isinstance(rules, list) else [rules]
+        if any(str((r.get("FREQ") or [""])[0]).upper() not in ALLOWED_FREQ for r in rules):
+            del ev["RRULE"]
+            dropped += 1
+    return dropped
+
+
 def events(ics: bytes, tz, today: dt.date) -> list[tuple[str, dt.date, dt.date]]:
     """(title, first day, last day) for busy events in the sync window, recurring ones expanded."""
     import icalendar
     import recurring_ical_events
+    if len(ics) > MAX_FEED_BYTES:
+        raise ValueError("feed too large")
     cal = icalendar.Calendar.from_ical(ics)
+    _drop_fine_rrules(cal)
     start = dt.datetime.combine(today - dt.timedelta(days=1), dt.time(0), tz)
     end = dt.datetime.combine(today + dt.timedelta(days=WINDOW_DAYS), dt.time(0), tz)
     out = []
+    deadline = time.monotonic() + FEED_TIME_BUDGET
     for ev in recurring_ical_events.of(cal).between(start, end):
+        if len(out) >= MAX_EVENTS_PER_FEED or time.monotonic() > deadline:
+            log.warning("calendar feed truncated at %d events", len(out))
+            break
         if str(ev.get("TRANSP", "")).upper() == "TRANSPARENT" or str(ev.get("STATUS", "")).upper() == "CANCELLED":
             continue
         s = ev.get("DTSTART").dt
@@ -76,9 +109,22 @@ def _talent_keys(store: Store) -> list[tuple[int, list[str]]]:
     return keys
 
 
-def sync(store: Store, tz, http: httpx.Client | None = None, now: float | None = None) -> dict:
+def fetch_feed(http: httpx.Client, url: str) -> bytes:
+    """Download one feed with the size cap enforced while streaming."""
+    with http.stream("GET", url) as r:
+        r.raise_for_status()
+        buf = bytearray()
+        for chunk in r.iter_bytes():
+            buf.extend(chunk)
+            if len(buf) > MAX_FEED_BYTES:
+                raise ValueError("feed too large")
+    return bytes(buf)
+
+
+def sync(store: Store, tz, http: httpx.Client | None = None, now: float | None = None,
+         check_host=is_public_https) -> dict:
     """Fetch every calendar and replace the calendar-sourced busy dates. Returns a status dict."""
-    http = http or httpx.Client(timeout=20, follow_redirects=True)
+    http = http or httpx.Client(timeout=15, follow_redirects=False)
     today = dt.datetime.fromtimestamp(now or time.time(), tz).date()
     kb = KB(store)
     shared = [u for u in (kb.get("calendar_urls", []) or []) if u.strip()]
@@ -88,17 +134,19 @@ def sync(store: Store, tz, http: httpx.Client | None = None, now: float | None =
     status = {"at": int(now or time.time()), "calendars": 0, "events": 0, "matched": 0, "unmatched": 0, "errors": []}
 
     def fetch(url: str) -> bytes | None:
-        if not url.startswith("https://"):
-            status["errors"].append("alamat kalender harus diawali https://")
+        ok, why = check_host(url)
+        if not ok:
+            status["errors"].append(f"kalender …{url[-12:]}: {why}")
             return None
         try:
-            r = http.get(url)
-            r.raise_for_status()
+            data = fetch_feed(http, url)
             status["calendars"] += 1
-            return r.content
+            return data
         except httpx.HTTPError as e:
             status["errors"].append(f"kalender …{url[-12:]} tidak bisa dibuka ({type(e).__name__})")
-            return None
+        except ValueError:
+            status["errors"].append(f"kalender …{url[-12:]} terlalu besar (maks. 2 MB)")
+        return None
 
     for url in shared:
         data = fetch(url)
@@ -137,14 +185,29 @@ def sync(store: Store, tz, http: httpx.Client | None = None, now: float | None =
     return status
 
 
+def sync_in_thread(store: Store, tz, now: float | None = None) -> bool:
+    """Run sync() on a worker thread unless one is already running. Returns True if started."""
+    if not _lock.acquire(blocking=False):
+        return False
+
+    def run():
+        try:
+            sync(store, tz, now=now)
+        except Exception:
+            log.exception("calendar sync failed")
+            store.set_kv("calendar_last_try", str(int(now or time.time())))
+        finally:
+            _lock.release()
+
+    threading.Thread(target=run, name="calendar-sync", daemon=True).start()
+    return True
+
+
 def maybe_sync(store: Store, tz, now: float | None = None) -> None:
     now = now or time.time()
     last = int(store.get_kv("calendar_last_try", "0") or 0)
     has_any = (KB(store).get("calendar_urls") or
                store.one("SELECT 1 FROM talents WHERE calendar_url LIKE 'http%'"))
     if has_any and now - last >= SYNC_EVERY_SECONDS:
-        try:
-            sync(store, tz, now=now)
-        except Exception:
-            log.exception("calendar sync failed")
-            store.set_kv("calendar_last_try", str(int(now)))
+        store.set_kv("calendar_last_try", str(int(now)))     # claim the slot before the thread starts
+        sync_in_thread(store, tz, now)

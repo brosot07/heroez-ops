@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from . import talents as tl
 from .kb import DEFAULT_TEXTS, INFO_SECTIONS, KB, TEXT_LABELS
+from .safety import UnsafeFile, check_zip
 from .sources.meta_send import month_sends
 from .terbilang import rupiah
 from .ui_common import e
@@ -48,8 +49,8 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
             raise HTTPException(403, "Hanya supervisor yang bisa mengubah pengetahuan.")
 
     @r.get("/pengetahuan", response_class=HTMLResponse)
-    def knowledge(request: Request, msg: str = "", ok: int = 1):
-        user = who(request)
+    async def knowledge(request: Request, msg: str = "", ok: int = 1):
+        user = await who(request)
         return show("Pengetahuan", page(user), user, "/pengetahuan", msg, bool(ok))
 
     def page(user) -> str:
@@ -145,8 +146,8 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{kol}{gcal}{cal}{rc}{faq}{rest}'
 
     @r.get("/pengetahuan/contoh.xlsx")
-    def example(request: Request):
-        who(request)
+    async def example(request: Request):
+        await who(request)
         return Response(example_roster_xlsx(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": 'attachment; filename="contoh-daftar-kol.xlsx"'})
 
@@ -156,6 +157,11 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         data = await file.read() if file else b""
         if not data or len(data) > MAX_UPLOAD:
             raise HTTPException(400, "File kosong atau terlalu besar (maks. 10 MB).")
+        if data.startswith(b"PK"):
+            try:
+                check_zip(data)
+            except UnsafeFile as ex:
+                raise HTTPException(400, str(ex)) from ex
         return data, file.filename or ""
 
     def back(msg: str, ok: bool = True) -> RedirectResponse:
@@ -164,7 +170,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
 
     @r.post("/pengetahuan/kol")
     async def kol_upload(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         data, name = await upload(request)
         try:
@@ -176,7 +182,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
 
     @r.post("/pengetahuan/jadwal")
     async def busy_upload(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         data, name = await upload(request)
         try:
@@ -188,7 +194,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
 
     @r.post("/pengetahuan/kalender")
     async def calendars(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         f = await form(request)
         urls = [u.strip() for u in str(f.get("urls", "")).split() if u.strip()]
@@ -199,15 +205,17 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
             kb.set("calendar_urls", [], user.key)
         elif urls:
             kb.set("calendar_urls", urls, user.key)
+        from starlette.concurrency import run_in_threadpool
+
         from . import calendar_sync
-        st = calendar_sync.sync(ui.store, ui.cfg().tz)
+        st = await run_in_threadpool(calendar_sync.sync, ui.store, ui.cfg().tz)
         ok = not st["errors"]
         return back(f"Sinkron: {st['events']} acara, {st['matched']} cocok dengan talent." +
                     (" " + "; ".join(st["errors"][:3]) if st["errors"] else ""), ok)
 
     @r.post("/pengetahuan/ratecard")
     async def ratecard_upload(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         data, _ = await upload(request)
         if not data.startswith(b"%PDF"):
@@ -219,7 +227,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
 
     @r.post("/pengetahuan/faq")
     async def faq_save(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         f = await form(request)
         out, i = [], 0
@@ -236,7 +244,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
 
     @r.post("/pengetahuan/teks")
     async def texts_save(request: Request):
-        user = who(request)
+        user = await who(request)
         manager(user)
         f = await form(request)
         kb.set("info", {k: str(f.get(f"info_{k}", "")).strip() for k in INFO_SECTIONS}, user.key)

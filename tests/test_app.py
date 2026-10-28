@@ -59,4 +59,4 @@ def test_telegram_requires_secret(client):
 def test_health(client):
     client.store.set_kv("last_tick_at", str(__import__("time").time().__int__()))
     r = client.get("/health")
-    assert r.status_code == 200 and r.json()["mode"] == "shadow"
+    assert r.status_code == 200 and r.json() == {"ok": True}        # nothing else is revealed publicly

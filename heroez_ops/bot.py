@@ -10,6 +10,7 @@ from .alerts.base import AlertChannel, Button
 from .config import Config
 from .db import Store
 from .links import defang
+from .textrules import redact
 from .notifier import Notifier
 from .phone import display, normalize
 from .states import Engine
@@ -22,6 +23,7 @@ HELP = (
     "/semua – semua chat yang menunggu\n"
     "/cari &lt;nama atau nomor&gt; – cari kontak\n"
     "/spam – pesan yang diduga spam (tidak dibalas bot)\n"
+    "/hapus &lt;nomor&gt; – supervisor: hapus semua data satu nomor (permintaan klien)\n"
     "/bantuan – pesan ini\n\n"
     "Tombol di notifikasi:\n"
     "✋ Saya ambil – chat jadi tanggung jawab kamu\n"
@@ -42,6 +44,7 @@ class Bot:
                  intake=None):
         self.cfg, self.store, self.engine, self.notifier, self.channel = cfg, store, engine, notifier, channel
         self.intake = intake
+        self.service = None   # set by Service (for /hapus)
 
     def _actor(self, user_id: int) -> str | None:
         """Admin key, 'spv:<key>', 'mgmt:<id>', or None if not allowed."""
@@ -155,6 +158,19 @@ class Bot:
             self.channel.send(chat_id, self.notifier.queue_text(key, now))
         elif cmd == "/semua":
             self.channel.send(chat_id, self.notifier.queue_text(None, now))
+        elif cmd == "/hapus":
+            if not actor.startswith("spv:"):
+                self.channel.send(chat_id, "Hanya supervisor yang bisa menghapus data nomor.")
+            else:
+                num = normalize(arg.strip(), local=True)
+                if not num or not self.store.one("SELECT 1 FROM contacts WHERE wa_id=?", (num,)):
+                    self.channel.send(chat_id, "Nomor tidak ditemukan. Contoh: /hapus 0812345678")
+                elif self.service is None:
+                    self.channel.send(chat_id, "Fitur ini belum aktif.")
+                else:
+                    counts = self.service.forget_number(num, actor)
+                    self.channel.send(chat_id, f"🗑️ Semua data untuk {display(num)} dihapus "
+                                               f"({counts.get('messages', 0)} pesan). Permintaan tercatat di audit.")
         elif cmd == "/spam":
             rows = self.store.q("SELECT i.wa_id, i.outcome, i.updated_at, c.name FROM intake i JOIN contacts c USING(wa_id) "
                                 "WHERE i.status='spam' AND i.updated_at>? ORDER BY i.updated_at DESC LIMIT 10",
@@ -163,8 +179,8 @@ class Bot:
                 self.channel.send(chat_id, "🟢 Tidak ada pesan yang diduga spam dalam 7 hari terakhir.")
             for r in rows:
                 last = self.store.one("SELECT text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (r["wa_id"],))
-                body = html.escape(defang(((last["text"] if last else "") or "")[:200]))
-                self.channel.send(chat_id, f"🗑️ <b>{html.escape(r['name'] or display(r['wa_id']))}</b> ({display(r['wa_id'])})\n"
+                body = html.escape(defang(redact(((last["text"] if last else "") or "")[:200])))
+                self.channel.send(chat_id, f"🗑️ <b>{html.escape(defang(r['name'] or display(r['wa_id'])))}</b> ({display(r['wa_id'])})\n"
                                            f"AI: {html.escape(defang(r['outcome'] or ''))}\n💬 “{body}”",
                                   [[Button("Bukan spam → teruskan ke admin", f"notspam:{r['wa_id']}")]])
         elif cmd == "/cari":

@@ -6,7 +6,10 @@ is stored as the exact .docx that was produced.
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -25,7 +28,11 @@ from .config import Config
 from .db import Store
 from .terbilang import parse_amount, rupiah
 from .ui_common import e, page
+from .owner_auth import COOKIE as OWNER_COOKIE
+from .safety import UnsafeFile, check_zip, content_disposition
 from .webauth import OWNER, AccessVerifier, User, remote_user
+
+_csrf_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("csrf")
 
 log = logging.getLogger(__name__)
 
@@ -49,9 +56,19 @@ class ContractsUI:
         self.home, self.store, self.cfg = home, store, cfg
         self.tdir = home / "data" / "templates"
         self.cdir = home / "data" / "contracts"
-        self.csrf = pysecrets.token_urlsafe(24)
+        self._csrf_secret = pysecrets.token_bytes(32)
         self.analyzer = analyzer or (lambda data, key: contract_ai.analyze(data, key))
         self._verifier: tuple[tuple[str, str], AccessVerifier] | None = None
+
+    # -- CSRF: one token per user (and per owner session), never shared across users ---
+    def csrf_for(self, user: User, request: Request | None) -> str:
+        session = request.cookies.get(OWNER_COOKIE, "") if (request is not None and user.role == "owner") else ""
+        msg = f"{user.role}:{user.key}:{user.email}:{session}".encode()
+        return hmac.new(self._csrf_secret, msg, hashlib.sha256).hexdigest()[:32]
+
+    @property
+    def csrf(self) -> str:
+        return _csrf_ctx.get(None) or self.csrf_for(OWNER, None)
 
     # -- identity -------------------------------------------------------------
     def verifier(self) -> AccessVerifier | None:
@@ -69,8 +86,10 @@ class ContractsUI:
                 ("Pengaturan", "/")] if local
                else [("Antrian", "/antrian"), ("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan")])
 
-        def who(request: Request) -> User:
-            return OWNER if local else remote_user(request, self.cfg(), self.verifier())
+        async def who(request: Request) -> User:
+            user = OWNER if local else remote_user(request, self.cfg(), self.verifier())
+            _csrf_ctx.set(self.csrf_for(user, request))
+            return user
 
         async def form(request: Request) -> dict:
             f = await request.form()
@@ -86,13 +105,13 @@ class ContractsUI:
 
         # -- queue ----------------------------------------------------------
         @r.get("/antrian", response_class=HTMLResponse)
-        def queue(request: Request, semua: int = 0, msg: str = ""):
-            user = who(request)
+        async def queue(request: Request, semua: int = 0, msg: str = ""):
+            user = await who(request)
             return show("Antrian", self.queue_page(user, bool(semua)), user, "/antrian", msg)
 
         @r.post("/antrian/aksi")
         async def queue_action(request: Request):
-            user = who(request)
+            user = await who(request)
             f = await form(request)
             wa_id, action = str(f.get("wa", "")), str(f.get("aksi", ""))
             if not self.store.one("SELECT 1 FROM conversations WHERE wa_id=?", (wa_id,)):
@@ -149,7 +168,13 @@ class ContractsUI:
         async def save_contract(request: Request, user: User = Depends(who)):
             f = await form(request)
             cid = int(f.get("cid") or 0)
-            tpl = self._approved(int(f["tid"]), allow_archived=bool(cid))
+            if cid:
+                existing = self._contract(cid)                       # 404 if it doesn't exist
+                if int(f["tid"]) != existing["template_id"]:
+                    raise HTTPException(400, "Template tidak sesuai dengan kontrak ini.")
+                tpl = self._approved(existing["template_id"], allow_archived=True)
+            else:
+                tpl = self._approved(int(f["tid"]))
             try:
                 values, rows = self.parse_contract_form(tpl, f)
             except ValueError as ex:
@@ -200,7 +225,7 @@ class ContractsUI:
             name = re.sub(r"[^\w .-]+", "-", f"{c['number']} {c['client_name'] or ''}").strip(" -") + ".docx"
             self.store.audit(user.key, "contract_download", None, {"contract": cid})
             return Response(path.read_bytes(), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            headers={"Content-Disposition": f'attachment; filename="{name}"'})
+                            headers={"Content-Disposition": content_disposition(name)})
 
         # -- templates ------------------------------------------------------
         @r.get("/template", response_class=HTMLResponse)
@@ -229,6 +254,10 @@ class ContractsUI:
             data = await file.read() if file else b""
             if not data or len(data) > MAX_UPLOAD or not data.startswith(b"PK"):
                 raise HTTPException(400, "File harus .docx (maks. 10 MB).")
+            try:
+                check_zip(data)
+            except UnsafeFile as ex:
+                raise HTTPException(400, str(ex)) from ex
             try:
                 dtp.load(data)
             except Exception as ex:
@@ -286,7 +315,7 @@ class ContractsUI:
             t = self._template(tid)
             return Response((self.tdir / str(tid) / "original.docx").read_bytes(),
                             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            headers={"Content-Disposition": f'attachment; filename="{slug(t["name"])}-asli.docx"'})
+                            headers={"Content-Disposition": content_disposition(f"{slug(t['name'])}-asli.docx")})
 
         return r
 
@@ -298,6 +327,7 @@ class ContractsUI:
     def queue_page(self, user: User, everything: bool) -> str:
         from .bizhours import BusinessClock
         from .links import alert_line, defang
+        from .textrules import redact
         from .notifier import human_duration
         from .phone import display
         mine_only = user.role == "admin" and not everything
@@ -316,7 +346,7 @@ class ContractsUI:
             since = dt.datetime.fromtimestamp(c["waiting_since"], dt.timezone.utc)
             last = self.store.one("SELECT id, text, type FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1",
                                   (c["wa_id"],))
-            snippet = defang((last["text"] or f"[{last['type']}]")[:160]) if last else ""
+            snippet = defang(redact((last["text"] or f"[{last['type']}]")[:160])) if last else ""
             warn = alert_line(self.store, last["id"]) if last else ""
             pic = self.cfg().admin(c["assignee"]).name if c["assignee"] and self.cfg().admin(c["assignee"]) else "-"
             btn = lambda a, label: (f'<form method="post" action="/antrian/aksi" style="display:inline">'  # noqa: E731

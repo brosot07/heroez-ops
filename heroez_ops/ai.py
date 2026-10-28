@@ -69,14 +69,16 @@ def build_transcript(rows: list, tz) -> str:
 
 
 class ClaudeClassifier:
-    def __init__(self, api_key: str, store: Store, model: str = "claude-haiku-5-5", client=None):
+    def __init__(self, api_key: str, store: Store, model: str = "claude-haiku-5-5", client=None, daily_cap: int = 3000):
         if client is None:
             import anthropic
             client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=2)
-        self.client, self.store, self.model = client, store, model
+        self.client, self.store, self.model, self.daily_cap = client, store, model, daily_cap
 
     def classify(self, transcript: str, contact_kind: str) -> Verdict | None:
         import anthropic
+        if over_daily_cap(self.store, self.daily_cap):
+            return None
         user = (f"Jenis kontak menurut data kami: {contact_kind}\n\n"
                 f"<chat>\n{transcript}\n</chat>\n\nApakah Heroez masih perlu membalas?")
         try:
@@ -129,6 +131,20 @@ class ClaudeClassifier:
 
     def _meter_error(self, kind: str) -> None:
         self.store.set_kv("ai_last_error", json.dumps({"at": int(time.time()), "kind": kind}))
+
+
+def calls_today(store: Store) -> int:
+    row = store.one("SELECT COALESCE(SUM(calls),0) c FROM ai_usage WHERE day=?", (dt.date.today().isoformat(),))
+    return int(row["c"])
+
+
+def over_daily_cap(store: Store, cap: int) -> bool:
+    if cap and calls_today(store) >= cap:
+        if store.get_kv("ai_cap_warned") != dt.date.today().isoformat():
+            store.set_kv("ai_cap_warned", dt.date.today().isoformat())
+            log.warning("AI daily call cap (%d) reached; falling back to rules for the rest of the day", cap)
+        return True
+    return False
 
 
 def month_cost(store: Store, today: dt.date | None = None) -> tuple[int, float]:

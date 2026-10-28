@@ -17,6 +17,7 @@ def ui(tmp_path):
     shutil.copy(defaults / "config.yaml", tmp_path / "config" / "config.yaml")
     shutil.copy(defaults / "holidays.yaml", tmp_path / "config" / "holidays.yaml")
     restarted = []
+    (tmp_path / "initial_password.txt").write_text("rahasia-123\n")        # what the installer writes
     u = SetupUI(tmp_path, Store(":memory:"), lambda: restarted.append(1))
     u.restarted = restarted
     return u
@@ -45,7 +46,7 @@ def test_form_round_trip(ui, tmp_path):
 
 def logged_in(ui) -> TestClient:
     c = TestClient(ui.create_app())
-    r = c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    r = c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123"})
     assert r.status_code == 200
     return c
 
@@ -85,25 +86,50 @@ def test_password_asked_every_time(ui, tmp_path):
     c = TestClient(ui.create_app())
     r = c.get("/", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("/login")
-    assert "Buat password pemilik" in c.get("/login").text
-    assert "minimal 8" in c.post("/login", data={"csrf": ui.csrf, "password": "pendek", "password2": "pendek"}).text
-    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
-    assert c.get("/").status_code == 200
+    assert not (tmp_path / "initial_password.txt").exists()                # consumed at start-up
     stored = (tmp_path / "config" / "owner.json").read_text()
-    assert "rahasia" not in stored and "pbkdf2" in stored                      # only a hash is kept
-    cookie = c.cookies.get("hz_owner")
-    assert cookie
-    # A new browser (no cookie) must log in again; wrong password refused.
-    c2 = TestClient(ui.create_app())
-    assert c2.get("/", follow_redirects=False).status_code == 303
-    assert c2.post("/login", data={"csrf": ui.csrf, "password": "salah-salah"}).status_code == 401
+    assert "rahasia" not in stored and "pbkdf2" in stored                  # only a hash is kept
+    assert c.post("/login", data={"csrf": ui.csrf, "password": "salah-salah"}).status_code == 401
+    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123"})
+    assert c.get("/").status_code == 200
+    # A new browser (no cookie) must log in again.
+    assert TestClient(ui.create_app()).get("/", follow_redirects=False).status_code == 303
     c.get("/logout")
     assert c.get("/", follow_redirects=False).status_code == 303
 
 
-def test_lockout_and_reset_flag(ui, tmp_path):
+def test_nobody_can_claim_a_missing_password(ui, tmp_path):
+    (tmp_path / "config" / "owner.json").unlink()
     c = TestClient(ui.create_app())
-    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    r = c.post("/login", data={"csrf": ui.csrf, "password": "baru-baru-123", "password2": "baru-baru-123"})
+    assert r.status_code == 403 and not (tmp_path / "config" / "owner.json").exists()
+    # The reset tool writes a new initial password; the next login adopts it.
+    (tmp_path / "initial_password.txt").write_text("dari-reset-99\n")
+    assert c.post("/login", data={"csrf": ui.csrf, "password": "dari-reset-99"}).status_code == 200
+
+
+def test_cross_site_posts_refused(ui):
+    c = logged_in(ui)
+    r = c.post("/save", data={**FORM, "csrf": ui.csrf}, headers={"Origin": "http://127.0.0.1:9999"})
+    assert r.status_code == 403
+    r = c.post("/save", data={**FORM, "csrf": ui.csrf}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    r = c.post("/save", data={**FORM, "csrf": ui.csrf}, headers={"Origin": "http://127.0.0.1:8788"})
+    assert r.status_code == 200 and "Tersimpan" in r.text
+
+
+def test_change_password(ui):
+    c = logged_in(ui)
+    r = c.post("/password", data={"csrf": ui.csrf, "current": "rahasia-123", "new": "baru-sekali-1", "new2": "baru-sekali-1"},
+               follow_redirects=False)
+    assert r.status_code == 303
+    c2 = TestClient(ui.create_app())
+    assert c2.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123"}).status_code == 401
+    assert c2.post("/login", data={"csrf": ui.csrf, "password": "baru-sekali-1"}).status_code == 200
+
+
+def test_lockout_and_reset_flag(ui, tmp_path):
+    c = logged_in(ui)
     c2 = TestClient(ui.create_app())
     for _ in range(5):
         c2.post("/login", data={"csrf": ui.csrf, "password": "tebak-tebak"})
@@ -117,8 +143,7 @@ def test_lockout_and_reset_flag(ui, tmp_path):
 def test_idle_session_expires(ui):
     import json
     import time
-    c = TestClient(ui.create_app())
-    c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "password2": "rahasia-123"})
+    c = logged_in(ui)
     key = ui.owner._key(c.cookies.get("hz_owner"))
     old = int(time.time()) - 31 * 60
     ui.store.set_kv(key, json.dumps({"created": old, "seen": old}))

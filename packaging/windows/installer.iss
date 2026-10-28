@@ -50,8 +50,10 @@ Name: "{group}\Reset password Heroez Ops"; Filename: "{app}\reset-password.cmd"
 Name: "{autodesktop}\Heroez Ops - Pengaturan"; Filename: "{app}\Pengaturan Heroez Ops.url"
 
 [Run]
-; Data folder: only SYSTEM and Administrators may read it (chat history, encrypted secrets).
-Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\HeroezOps"" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F"; Flags: runhidden waituntilterminated
+; Data folder: owned by Administrators, readable only by SYSTEM and Administrators (chat history, encrypted secrets).
+; /setowner and /T also fix a folder that already existed before the install.
+Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\HeroezOps"" /setowner *S-1-5-32-544 /T /C"; Flags: runhidden waituntilterminated
+Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\HeroezOps"" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /T /C"; Flags: runhidden waituntilterminated
 Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-ac 0"; Flags: runhidden waituntilterminated; Tasks: nosleep
 Filename: "{sys}\powercfg.exe"; Parameters: "/change hibernate-timeout-ac 0"; Flags: runhidden waituntilterminated; Tasks: nosleep
 Filename: "{app}\HeroezOpsService.exe"; Parameters: "install"; Flags: runhidden waituntilterminated
@@ -63,18 +65,58 @@ Filename: "{app}\HeroezOpsService.exe"; Parameters: "stop"; Flags: runhidden wai
 Filename: "{app}\HeroezOpsService.exe"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
 
 [Code]
+var
+  InitialPassword: String;
+
+function RandomPassword(Len: Integer): String;
+var
+  Chars: String;
+  I: Integer;
+begin
+  Chars := 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  Result := '';
+  for I := 1 to Len do
+    Result := Result + Chars[Random(Length(Chars)) + 1];
+end;
+
 // On upgrade: stop and remove the old service before files are replaced.
-// Settings and data in ProgramData\HeroezOps are left untouched.
+// Settings and data in ProgramData\HeroezOps are left untouched. A data folder that
+// contains junctions/symlinks (planted by another local user) aborts the install.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  Svc: String;
+  Svc, DataDir, Check: String;
   Rc: Integer;
 begin
+  Result := '';
   Svc := ExpandConstant('{app}\HeroezOpsService.exe');
   if FileExists(Svc) then
   begin
     Exec(Svc, 'stop', '', SW_HIDE, ewWaitUntilTerminated, Rc);
     Exec(Svc, 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, Rc);
   end;
-  Result := '';
+  DataDir := ExpandConstant('{commonappdata}\HeroezOps');
+  if DirExists(DataDir) then
+  begin
+    Check := '-NoProfile -Command "if (Get-ChildItem -LiteralPath ''' + DataDir + ''' -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue) { exit 3 } else { exit 0 }"';
+    if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Check, '', SW_HIDE, ewWaitUntilTerminated, Rc) and (Rc = 3) then
+      Result := 'Folder ' + DataDir + ' berisi junction/symlink yang tidak wajar. Hapus folder itu (administrator) lalu jalankan installer lagi.';
+  end;
+end;
+
+// First install: generate the owner password and show it once. Upgrades keep the existing one.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  DataDir: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    DataDir := ExpandConstant('{commonappdata}\HeroezOps');
+    if (not FileExists(DataDir + '\config\owner.json')) and (not FileExists(DataDir + '\initial_password.txt')) then
+    begin
+      InitialPassword := RandomPassword(12);
+      SaveStringToFile(DataDir + '\initial_password.txt', InitialPassword + #13#10, False);
+      MsgBox('Password pemilik untuk halaman Heroez Ops (diminta setiap kali membuka halaman di komputer ini):' + #13#10#13#10 +
+             InitialPassword + #13#10#13#10 + 'Catat sekarang. Bisa diganti di halaman Pengaturan.', mbInformation, MB_OK);
+    end;
+  end;
 end;

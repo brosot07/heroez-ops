@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 from pathlib import Path
 
@@ -86,6 +87,7 @@ class ShadowAlertChannel(AlertChannel):
         self._next_id = 1
 
     def _write(self, rec: dict) -> None:
+        rec.setdefault("at", int(time.time()))
         self.sent.append(rec)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")

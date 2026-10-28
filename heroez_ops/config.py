@@ -77,6 +77,7 @@ class Config:
     ai_min_confidence_to_close: float = 0.75
     ai_context_messages: int = 8
     ai_wait_minutes: int = 10
+    ai_max_calls_per_day: int = 3000
     anthropic_api_key: str = ""
     access_team_domain: str = ""        # Cloudflare Access, e.g. heroez.cloudflareaccess.com
     access_audience: str = ""           # the Access application's AUD tag
@@ -242,6 +243,7 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         ai_min_confidence_to_close=float((raw.get("ai") or {}).get("min_confidence_to_close", 0.75)),
         ai_context_messages=int((raw.get("ai") or {}).get("context_messages", 8)),
         ai_wait_minutes=int((raw.get("ai") or {}).get("wait_minutes", 10)),
+        ai_max_calls_per_day=int((raw.get("ai") or {}).get("max_calls_per_day", 3000)),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         access_team_domain=str((raw.get("access") or {}).get("team_domain", "") or ""),
         access_audience=str((raw.get("access") or {}).get("audience", "") or ""),

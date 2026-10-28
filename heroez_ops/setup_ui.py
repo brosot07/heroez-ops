@@ -48,6 +48,7 @@ class SetupUI:
         self.csrf = pysecrets.token_urlsafe(24)
         self.owner = OwnerAuth(home, store)
         self.owner.apply_reset_flag()
+        self.owner.apply_initial_password()
 
     # -- data -----------------------------------------------------------
     def raw(self) -> dict:
@@ -308,6 +309,11 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
 <label>URLhaus Auth-Key <small>(opsional, gratis di auth.abuse.ch: cek link berbahaya tanpa membukanya · {has("URLHAUS_AUTH_KEY")})</small></label><input type="password" name="urlhaus_key" autocomplete="off"></div>
 
 <button type="submit">Simpan & mulai ulang</button></form>
+<form method="post" action="/password" style="margin-top:24px" class="card"><input type="hidden" name="csrf" value="{self.csrf}">
+<h2>Ganti password pemilik</h2><div class="row"><div><label>Password lama</label><input type="password" name="current" required></div>
+<div><label>Password baru <small>(min. 8)</small></label><input type="password" name="new" required minlength="8"></div></div>
+<label>Ulangi password baru</label><input type="password" name="new2" required minlength="8"><br><br>
+<button class="secondary" type="submit">Ganti password</button></form>
 <form method="post" action="/test-telegram" style="margin-top:12px"><input type="hidden" name="csrf" value="{self.csrf}">
 <button class="secondary" type="submit">Kirim pesan tes ke semua admin & supervisor</button></form>
 </main></body></html>"""
@@ -340,6 +346,13 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
             # Blocks DNS rebinding for every page on this local app, including the contract pages.
             if request.headers.get("host", "") not in allowed_hosts:
                 return HTMLResponse("Forbidden", status_code=403)
+            if request.method == "POST":
+                # Only pages served from this exact origin may post here (blocks other localhost ports/sites).
+                origin = request.headers.get("origin")
+                site = request.headers.get("sec-fetch-site")
+                if (origin and origin not in {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}) or \
+                        (site and site not in ("same-origin", "none")):
+                    return HTMLResponse("Forbidden", status_code=403)
             # Password every time: no valid session -> login page (except the login page itself).
             if request.url.path not in ("/login", "/logout") and not self.owner.valid(request.cookies.get(COOKIE)):
                 from urllib.parse import quote
@@ -348,10 +361,11 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
 
         def login_page(message: str = "", nxt: str = "/") -> str:
             first = not self.owner.has_password()
-            title = "Buat password pemilik" if first else "Masuk"
-            intro = ("Belum ada password. Buat sekarang: password ini diminta setiap kali halaman Heroez Ops dibuka "
-                     "di komputer ini." if first else "Halaman ini hanya untuk pemilik/pengelola komputer server.")
-            extra = '<label>Ulangi password</label><input type="password" name="password2" required minlength="8">' if first else ""
+            title = "Masuk"
+            intro = ("Belum ada password pemilik. Jalankan Start menu → “Reset password Heroez Ops” (administrator Windows) "
+                     "untuk membuat password awal." if first else
+                     "Halaman ini hanya untuk pemilik/pengelola komputer server. Password diminta setiap kali.")
+            extra = ""
             msg = f'<div class="msg bad">{_e(message)}</div>' if message else ""
             return (f'<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" '
                     f'content="width=device-width,initial-scale=1"><title>Heroez Ops Login</title><style>{CSS}</style></head>'
@@ -376,20 +390,32 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
             if not nxt.startswith("/") or nxt.startswith("//"):
                 nxt = "/"
             pw = form.get("password", "")
+            self.owner.apply_initial_password()
             if not self.owner.has_password():
-                if pw != form.get("password2", ""):
-                    return HTMLResponse(login_page("Kedua password tidak sama.", nxt))
-                try:
-                    self.owner.set_password(pw)
-                except ValueError as ex:
-                    return HTMLResponse(login_page(str(ex), nxt))
-            elif self.owner.locked():
+                return HTMLResponse(login_page("Belum ada password pemilik. Jalankan “Reset password Heroez Ops” dulu.", nxt),
+                                    status_code=403)
+            if self.owner.locked():
                 return HTMLResponse(login_page("Terlalu banyak percobaan salah. Coba lagi 5 menit lagi.", nxt), status_code=429)
             elif not self.owner.check_password(pw):
                 return HTMLResponse(login_page("Password salah.", nxt), status_code=401)
             resp = RedirectResponse(nxt, status_code=303)
             # No max-age: the cookie ends when the browser closes.
             resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/")
+            return resp
+
+        @app.post("/password", response_class=HTMLResponse)
+        async def change_password(request: Request):
+            form = await form_of(request)
+            if not self.owner.check_password(form.get("current", "")):
+                return self.page("Password lama salah.", ok=False)
+            if form.get("new", "") != form.get("new2", ""):
+                return self.page("Kedua password baru tidak sama.", ok=False)
+            try:
+                self.owner.set_password(form.get("new", ""))
+            except ValueError as ex:
+                return self.page(str(ex), ok=False)
+            resp = RedirectResponse("/login", status_code=303)
+            resp.delete_cookie(COOKIE, path="/")
             return resp
 
         @app.get("/logout")

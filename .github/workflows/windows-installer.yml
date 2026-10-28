@@ -1,49 +1,66 @@
 # Builds HeroezOps-Setup-<version>.exe on a Windows runner.
-# Run it from the Actions tab ("Run workflow"), or push a tag like v0.2.0.
+# Run it from the Actions tab ("Run workflow"), or push a tag like v0.8.0.
 # The installer appears under the run's "Artifacts" (and on the Release for tags).
+#
+# Supply chain: every download is pinned to a version and checked against a SHA256
+# recorded here; actions are pinned to exact versions; the token is read-only except
+# for the release step.
 name: Windows installer
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version number (e.g. 0.2.0)"
+        description: "Version number (e.g. 0.8.0)"
         required: true
-        default: "0.2.0"
+        default: "0.8.0"
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   WINSW_VERSION: v2.12.0
+  WINSW_SHA256: 05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
+  CLOUDFLARED_VERSION: "2026.10.5"
+  CLOUDFLARED_SHA256: db4e4c413612a0916f3e1679d3caaf376f94911952d163028fb726fb2e0516a9
+  INNOSETUP_VERSION: "6.4.3"
 
 jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.13"
-      - run: pip install -r packaging/windows/requirements-build.txt pytest
+      - run: pip install -r packaging/windows/requirements-build.txt pytest==8.4.1
       - run: python -m pytest -q
 
   build:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.13"
 
       - name: Version
         id: v
         shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "${{ inputs.version }}" }
+          $v = if ($env:REF_TYPE -eq "tag") { $env:REF_NAME.TrimStart("v") } else { $env:INPUT_VERSION }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "version must look like 1.2.3, got '$v'" }
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Build HeroezOps.exe
@@ -57,34 +74,47 @@ jobs:
           $env:HEROEZ_HOME = "$env:RUNNER_TEMP\hzhome"
           $p = Start-Process dist\HeroezOps\HeroezOps.exe -PassThru -WindowStyle Hidden
           Start-Sleep 10
-          $r = Invoke-WebRequest http://127.0.0.1:8788/ -UseBasicParsing
+          $r = Invoke-WebRequest http://127.0.0.1:8788/login -UseBasicParsing
           if ($r.StatusCode -ne 200) { throw "settings page did not start" }
           $h = Invoke-WebRequest http://127.0.0.1:8787/health -UseBasicParsing
           if ($h.StatusCode -ne 200) { throw "service did not start" }
           Stop-Process $p.Id
 
-      - name: Download WinSW and cloudflared
+      - name: Download WinSW and cloudflared (pinned, checksummed)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force packaging/windows/bin | Out-Null
           Invoke-WebRequest "https://github.com/winsw/winsw/releases/download/$env:WINSW_VERSION/WinSW-x64.exe" -OutFile packaging/windows/bin/WinSW-x64.exe
-          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile packaging/windows/bin/cloudflared.exe
+          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/download/$env:CLOUDFLARED_VERSION/cloudflared-windows-amd64.exe" -OutFile packaging/windows/bin/cloudflared.exe
+          foreach ($pair in @(@("packaging/windows/bin/WinSW-x64.exe", $env:WINSW_SHA256), @("packaging/windows/bin/cloudflared.exe", $env:CLOUDFLARED_SHA256))) {
+            $actual = (Get-FileHash $pair[0] -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $pair[1]) { throw "checksum mismatch for $($pair[0]): $actual" }
+          }
+          $sig = Get-AuthenticodeSignature packaging/windows/bin/cloudflared.exe
+          if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Cloudflare") { throw "cloudflared signature check failed: $($sig.Status)" }
           & packaging/windows/bin/cloudflared.exe --version
-          Get-FileHash packaging/windows/bin/*.exe | Format-Table -AutoSize
 
       - name: Build installer
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
+          choco install innosetup --version=$env:INNOSETUP_VERSION --no-progress -y
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.v.outputs.version }}" packaging\windows\installer.iss
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: HeroezOps-Setup-${{ steps.v.outputs.version }}
           path: dist/installer/*.exe
 
-      - name: Attach to release (tags only)
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
         with:
-          files: dist/installer/*.exe
+          path: dist
+      - uses: softprops/action-gh-release@v2.3.2
+        with:
+          files: dist/**/*.exe

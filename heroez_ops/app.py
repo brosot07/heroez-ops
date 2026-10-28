@@ -111,9 +111,7 @@ def create_app(cfg: Config | None = None, store: Store | None = None, service: S
         now = int(time.time())
         last_tick = int(store.get_kv("last_tick_at", "0") or 0)
         pending = store.one("SELECT COUNT(*) AS n FROM inbox WHERE processed_at IS NULL")["n"]
-        ok = now - last_tick < 180
-        body = {"ok": ok, "mode": cfg.mode, "seconds_since_tick": now - last_tick, "pending_webhooks": pending,
-                "seconds_since_last_webhook": (now - last_wh) if (last_wh := int(store.get_kv("last_webhook_at", "0") or 0)) else None}
-        return JSONResponse(body, status_code=200 if ok else 503)
+        ok = now - last_tick < 180 and pending < 500
+        return JSONResponse({"ok": ok}, status_code=200 if ok else 503)   # details stay on the local settings page
 
     return app

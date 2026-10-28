@@ -207,6 +207,7 @@ class Store:
         self.conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA secure_delete=ON")      # erased text is overwritten, not left in free pages
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
         self.lock = threading.RLock()
@@ -261,6 +262,20 @@ class Store:
                 self.conn.backup(target)
         finally:
             target.close()
+
+    def vacuum(self) -> None:
+        with self.lock:
+            self.conn.execute("VACUUM")
+
+    def forget_number(self, wa_id: str) -> dict:
+        """Erase everything about one WhatsApp number (data-subject request)."""
+        counts = {}
+        with self.tx():
+            for table in ("messages", "conversations", "state_changes", "waits", "feedback", "intake", "message_links",
+                          "outbox", "contacts"):
+                counts[table] = self.x(f"DELETE FROM {table} WHERE wa_id=?", (wa_id,)).rowcount
+            counts["audit_log"] = self.x("UPDATE audit_log SET wa_id='(dihapus)', detail=NULL WHERE wa_id=?", (wa_id,)).rowcount
+        return counts
 
     # -- kv / audit ------------------------------------------------------
     def get_kv(self, key: str, default: str | None = None) -> str | None:

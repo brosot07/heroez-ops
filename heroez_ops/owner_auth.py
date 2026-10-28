@@ -33,6 +33,20 @@ class OwnerAuth:
         self.fails: list[float] = []
 
     # -- password ---------------------------------------------------------------
+    def apply_initial_password(self) -> bool:
+        """initial_password.txt (written by the installer or the reset tool) becomes the password, then is deleted."""
+        p = self.path.parent.parent / "initial_password.txt"
+        if not p.exists():
+            return False
+        try:
+            pw = p.read_text(encoding="utf-8").strip()
+            if len(pw) >= 8:
+                self.set_password(pw)
+                self.store.audit("system", "owner_password_initial")
+        finally:
+            p.unlink(missing_ok=True)
+        return True
+
     def apply_reset_flag(self) -> bool:
         if self.reset_flag.exists():
             self.path.unlink(missing_ok=True)
