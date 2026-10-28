@@ -14,6 +14,7 @@ from .bizhours import BusinessClock
 from .bot import Bot
 from .config import Config
 from .db import Store
+from .deals import Deals
 from .digest import Digest
 from .drafts import Drafter
 from . import calendar_sync, sheet_sync
@@ -26,6 +27,7 @@ from .notifier import Notifier
 from .sources.base import MessageEvent
 from .sources.meta import MetaCoexistenceSource
 from .sources.meta_send import MetaSender, month_sends
+from .terbilang import rupiah
 from .states import Engine
 
 log = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ class Service:
         self.kb = KB(store)
         self.links = LinkChecker(store, cfg.urlhaus_auth_key)
         self.learning = Learning(store)
+        self.deals = Deals(cfg, store)
         shadow_dir = Path(data_dir) if data_dir else Path("data")
         self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
@@ -65,7 +68,7 @@ class Service:
         if cfg.intake_enabled and cfg.anthropic_api_key and self.classifier is not None:
             concierge = ConciergeAI(cfg.anthropic_api_key, store, cfg.tz, model=cfg.ai_model,
                                     daily_cap=cfg.ai_max_calls_per_day)
-        self.intake = Intake(cfg, store, self.engine, self.kb, self.sender, shadow_dir / "kb", ai=concierge)
+        self.intake = Intake(cfg, store, self.engine, self.kb, self.sender, shadow_dir / "kb", ai=concierge, deals=self.deals)
         self.drafter = drafter
         if self.drafter is None and cfg.drafts_enabled and cfg.anthropic_api_key:
             self.drafter = Drafter(cfg.anthropic_api_key, store, self.kb, cfg.tz, model=cfg.drafts_model,
@@ -107,6 +110,8 @@ class Service:
                 except Exception:
                     log.exception("link check failed")
             if isinstance(ev, MessageEvent) and not self.engine.last_was_duplicate:
+                if ev.source != "history":
+                    self.deals.touch(ev.wa_id, ev.ts)
                 try:
                     self.intake.on_event(ev)
                 except Exception:
@@ -146,6 +151,10 @@ class Service:
         self.check_send_budget(now)
         calendar_sync.maybe_sync(self.store, self.cfg.tz, now.timestamp())
         sheet_sync.maybe_sync(self.store, now.timestamp())
+        try:
+            self.deals.daily_refresh(now)
+        except Exception:
+            log.exception("deal sheet refresh failed")
 
     def check_send_budget(self, now: dt.datetime) -> None:
         """Warn supervisors once a month when bot sends pass 80% of the monthly budget."""
@@ -179,7 +188,39 @@ class Service:
                 continue
             self.engine.apply_verdict(r["wa_id"], r["ai_msg_id"], verdict, self.cfg.ai_min_confidence_to_close,
                                       int(now.timestamp()))
+            if verdict.deal_signal != "none" and r["kind"] != "talent":
+                try:
+                    self.deal_signal(r["wa_id"], verdict, now)
+                except Exception:
+                    log.exception("deal signal failed for %s", r["wa_id"])
         return len(rows)
+
+    def deal_signal(self, wa_id: str, verdict, now: dt.datetime) -> None:
+        """The AI saw deal language. Proposal requests move a lead forward quietly; an agreement is
+        never recorded by the AI alone — the admin confirms with one tap on Telegram."""
+        at = int(now.timestamp())
+        if verdict.deal_signal == "proposal_requested":
+            self.deals.proposal_requested(wa_id, at, verdict.deal_value)
+            return
+        did = self.deals.propose_deal(wa_id, at, verdict.deal_value)
+        if not did:
+            return
+        conv = self.store.one("SELECT assignee FROM conversations WHERE wa_id=?", (wa_id,))
+        contact = self.store.one("SELECT name FROM contacts WHERE wa_id=?", (wa_id,))
+        admin = self.cfg.admin(conv["assignee"]) if conv and conv["assignee"] else None
+        recipients = [admin.telegram_id] if admin and admin.telegram_id and not self.cfg.review else []
+        if not recipients:
+            recipients = [s.telegram_id for s in self.cfg.supervisors if s.telegram_id]
+        from .alerts.base import Button
+        from .phone import display
+        import html as _html
+        name = _html.escape((contact["name"] if contact else "") or display(wa_id))
+        value = f" ({rupiah(verdict.deal_value)})" if verdict.deal_value else ""
+        text = (f"🤝 <b>{name}</b> sepertinya setuju: {_html.escape(verdict.summary)}{value}\n"
+                f"Catat sebagai <b>Deal</b> di pipeline?")
+        buttons = [[Button("✅ Ya, deal", f"dealyes:{wa_id}:{did}"), Button("Belum", f"dealno:{wa_id}:{did}")]]
+        for chat_id in dict.fromkeys(recipients):
+            self.alert_channel.send(chat_id, text, buttons)
 
     def daily_maintenance(self, now: dt.datetime) -> None:
         """Once a day after 03:00 WIB: erase old message texts, prune raw payloads, back up the DB."""

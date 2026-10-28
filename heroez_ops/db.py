@@ -224,6 +224,29 @@ CREATE TABLE IF NOT EXISTS draft_outcomes (
     outcome TEXT NOT NULL,                   -- used | edited | ignored
     at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS deals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT NOT NULL DEFAULT '',
+    brand TEXT NOT NULL DEFAULT '',
+    contact_name TEXT NOT NULL DEFAULT '',
+    pic TEXT,                                -- admin key
+    talents TEXT NOT NULL DEFAULT '',
+    period_start TEXT,
+    period_end TEXT,
+    value INTEGER NOT NULL DEFAULT 0,        -- Rp, from the contract when one exists
+    stage TEXT NOT NULL,
+    stages TEXT NOT NULL DEFAULT '{}',       -- {stage: unix ts when reached}
+    source TEXT NOT NULL DEFAULT '',         -- bot | chat | contract | manual:<who>
+    next_action TEXT,
+    last_activity INTEGER,
+    contract_id INTEGER,
+    contract_number TEXT,
+    notes TEXT,
+    deal_asked_at INTEGER,                   -- last time an admin was asked "is this a deal?"
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS deals_wa ON deals(wa_id, stage);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

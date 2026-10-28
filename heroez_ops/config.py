@@ -98,6 +98,10 @@ class Config:
     sla_text: str = "1 jam kerja"
     intake_timeout_minutes: int = 15
     monthly_send_budget: int = 1000
+    # Phase 3: deal pipeline mirrored to the ops Google Sheet (Apps Script web app)
+    deal_stages: tuple[str, ...] = ("Lead", "Proposal", "Deal", "Kontrak", "Ditandatangani", "Lunas")
+    deals_sheet_url: str = ""
+    deals_sheet_token: str = ""
     message_text_days: int = 90
     raw_webhook_days: int = 7
     backup_keep: int = 14
@@ -161,6 +165,16 @@ def _time(value: str, name: str) -> dt.time:
         return dt.time.fromisoformat(str(value))
     except ValueError as e:
         raise ConfigError(f"{name} must look like 09:00, got {value!r}") from e
+
+
+def _stages(value) -> tuple[str, ...]:
+    """deals.stages: list or comma-separated string; 'Batal' is always implicit."""
+    if isinstance(value, str):
+        value = value.split(",")
+    names = [str(s).strip() for s in (value or []) if str(s).strip() and str(s).strip() != "Batal"]
+    if len(names) < 2:
+        return Config.deal_stages
+    return tuple(dict.fromkeys(names))
 
 
 def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None = None) -> Config:
@@ -282,6 +296,9 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         sla_text=str((raw.get("bot") or {}).get("sla_text", "1 jam kerja")),
         intake_timeout_minutes=int((raw.get("bot") or {}).get("intake_timeout_minutes", 15)),
         monthly_send_budget=int((raw.get("bot") or {}).get("monthly_send_budget", 1000)),
+        deal_stages=_stages((raw.get("deals") or {}).get("stages")),
+        deals_sheet_url=str((raw.get("deals") or {}).get("sheet_webhook_url", "") or "").strip(),
+        deals_sheet_token=os.environ.get("DEALS_SHEET_TOKEN", ""),
         contract_number_format=str((raw.get("contracts") or {}).get("number_format",
                                                                    "{seq:03d}/HRZ-KTR/{roman_month}/{year}")),
         message_text_days=int((raw.get("retention") or {}).get("message_text_days", 90)),

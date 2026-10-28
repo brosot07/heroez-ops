@@ -98,6 +98,18 @@ class Bot:
             else:
                 self.channel.answer_callback(cq["id"], "Sudah ditangani.")
             return
+        if action in ("dealyes", "dealno"):
+            svc = getattr(self, "service", None)
+            if not (self.cfg.admin(actor) or actor.startswith("spv:")) or not svc or not extra.isdigit():
+                self.channel.answer_callback(cq["id"], "Hanya admin atau supervisor.")
+                return
+            svc.deals.confirm_deal(int(extra), action == "dealyes", actor, at)
+            note = f"🤝 Dicatat sebagai Deal ({self._name(actor)})" if action == "dealyes" else f"Belum deal ({self._name(actor)})"
+            self.channel.answer_callback(cq["id"], "✅ Deal dicatat." if action == "dealyes" else "Oke, belum dicatat.")
+            msg = cq.get("message") or {}
+            if msg.get("message_id"):
+                self.channel.edit(msg["chat"]["id"], msg["message_id"], (msg.get("text") or "") + "\n\n" + html.escape(note), None)
+            return
         if action in ("fb_ok", "fb_no"):
             if not actor.startswith("spv:"):
                 self.channel.answer_callback(cq["id"], "Penilaian hanya untuk supervisor.")

@@ -71,9 +71,9 @@ def reply_id(ev: MessageEvent) -> str | None:
 
 class Intake:
     def __init__(self, cfg: Config, store: Store, engine: Engine, kb: KB, sender: MetaSender, files_dir: Path,
-                 ai: ConciergeAI | None = None):
+                 ai: ConciergeAI | None = None, deals=None):
         self.cfg, self.store, self.engine, self.kb, self.sender = cfg, store, engine, kb, sender
-        self.files_dir, self.ai = files_dir, ai
+        self.files_dir, self.ai, self.deals = files_dir, ai, deals
         self.now = int(time.time())
         from .bizhours import BusinessClock
         self.clock = BusinessClock(cfg)
@@ -405,6 +405,16 @@ class Intake:
                 preferred = (h["handler"] or None) if h else None
         self.engine.handoff(row["wa_id"], f"{summary} ({outcome})", priority, row["first_msg_ts"], self.now,
                             preferred=preferred, triage=triage)
+        u = data.get("u") or {}
+        if self.deals and u.get("kind") == "brand" and outcome != "spam":
+            try:
+                conv = self.engine.conversation(row["wa_id"])
+                found = (data.get("answered") or {}).get("found") or u.get("talents") or []
+                period = (u.get("date_start") or None, u.get("date_end") or None) if u.get("date_start") else None
+                self.deals.ensure_lead(row["wa_id"], u.get("brand_name") or "", conv["assignee"] if conv else None, self.now,
+                                       talents=", ".join(found), period=period, value=int(u.get("budget_idr") or 0), source="bot")
+            except Exception:
+                log.exception("deal lead failed for %s", row["wa_id"])
 
     @staticmethod
     def summary(data: dict) -> tuple[str, str]:

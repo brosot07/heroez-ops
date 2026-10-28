@@ -84,9 +84,10 @@ class ContractsUI:
 
     def router(self, local: bool) -> APIRouter:
         r = APIRouter()
-        nav = ([("Antrian", "/antrian"), ("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan"),
-                ("Pengaturan", "/")] if local
-               else [("Antrian", "/antrian"), ("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan")])
+        nav = ([("Antrian", "/antrian"), ("Deal", "/deal"), ("Kontrak", "/kontrak"), ("Template", "/template"),
+                ("Pengetahuan", "/pengetahuan"), ("Pengaturan", "/")] if local
+               else [("Antrian", "/antrian"), ("Deal", "/deal"), ("Kontrak", "/kontrak"), ("Template", "/template"),
+                     ("Pengetahuan", "/pengetahuan")])
 
         async def who(request: Request) -> User:
             user = OWNER if local else remote_user(request, self.cfg(), self.verifier())
@@ -102,8 +103,9 @@ class ContractsUI:
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
             return HTMLResponse(page(title, body, nav, active, user.name, message, ok, logout=local))
 
-        from . import kb_ui
+        from . import deals_ui, kb_ui
         kb_ui.add_routes(r, self, who, form, show)
+        deals_ui.add_routes(r, self, who, form, show)
 
         # -- queue ----------------------------------------------------------
         @r.get("/antrian", response_class=HTMLResponse)
@@ -184,7 +186,7 @@ class ContractsUI:
                 values = {k[2:]: v for k, v in f.items() if k.startswith("f_")}
                 return show("Kontrak", self.contract_form(tpl, values, self._rows_from_form(spec, f), None), user,
                             "/kontrak", str(ex), ok=False)
-            cid = self.store_contract(tpl, values, rows, user, cid)
+            cid = self.store_contract(tpl, values, rows, user, cid, deal_id=int(f.get("deal_id") or 0) or None)
             return RedirectResponse(f"/kontrak/{cid}", status_code=303)
 
         @r.get("/kontrak/{cid}", response_class=HTMLResponse)
@@ -325,6 +327,13 @@ class ContractsUI:
     def _engine(self):
         from .states import Engine
         return Engine(self.cfg(), self.store)
+
+    def _deals(self):
+        from .deals import Deals
+        if not hasattr(self, "_deals_http"):
+            import httpx
+            self._deals_http = httpx.Client(timeout=20, follow_redirects=False)
+        return Deals(self.cfg(), self.store, http=self._deals_http)
 
     def queue_page(self, user: User, everything: bool) -> str:
         from .bizhours import BusinessClock
@@ -589,10 +598,18 @@ class ContractsUI:
         tax = "" if not any(self._auto_kind(fd["key"]) == "tax" for fd in spec["fields"]) else (
             f'<p class="muted">PPN: {"dihitung " + str(round(self.cfg().ppn_rate * 100, 2)) + "% (Heroez PKP)" if self.cfg().pkp else "0 (Heroez bukan PKP, ubah di Pengaturan)"}</p>')
         title = f"Ubah kontrak {e(existing['number'])}" if existing else "Kontrak baru"
+        from .deals import LOST
+        linked = self.store.one("SELECT id FROM deals WHERE contract_id=?", (existing["id"],)) if existing else None
+        open_deals = self.store.q("SELECT id, brand, contact_name, stage FROM deals WHERE stage!=? AND (contract_id IS NULL OR id=?) "
+                                  "ORDER BY updated_at DESC LIMIT 50", (LOST, linked["id"] if linked else 0))
+        opts = "".join(f'<option value="{d["id"]}"{" selected" if linked and d["id"] == linked["id"] else ""}>'
+                       f'#{d["id"]} {e(d["brand"] or d["contact_name"] or "-")} · {e(d["stage"])}</option>' for d in open_deals)
+        deal = (f'<div class="card"><h2>Deal terkait</h2><p class="muted">Kontrak ini memindahkan deal ke tahap Kontrak dan mengisi nilainya. '
+                f'Pilih "(buat deal baru)" bila belum ada di pipeline.</p><select name="deal_id"><option value="0">(buat deal baru)</option>{opts}</select></div>')
         return (f'<h1>{title}</h1><p class="muted">Template: {e(tpl["name"])}. Isi pasal tidak bisa diubah di sini.</p>'
                 f'<form method="post" action="/kontrak/simpan"><input type="hidden" name="csrf" value="{self.csrf}">'
                 f'<input type="hidden" name="tid" value="{tpl["id"]}"><input type="hidden" name="cid" value="{existing["id"] if existing else 0}">'
-                f'{cards}{sow}{tax}<button type="submit">Simpan & buat dokumen</button></form>')
+                f'{cards}{sow}{tax}{deal}<button type="submit">Simpan & buat dokumen</button></form>')
 
     @staticmethod
     def _auto_kind(key: str) -> str | None:
@@ -661,7 +678,7 @@ class ContractsUI:
                 values[fd["key"]] = 0
         return values, rows
 
-    def store_contract(self, tpl, values: dict, rows: list[dict], user: User, cid: int = 0) -> int:
+    def store_contract(self, tpl, values: dict, rows: list[dict], user: User, cid: int = 0, deal_id: int | None = None) -> int:
         spec = json.loads(tpl["spec"])
         now = int(time.time())
         num_fd = next((fd for fd in spec["fields"] if fd["type"] == "contract_number"), None)
@@ -685,4 +702,10 @@ class ContractsUI:
         self.cdir.mkdir(parents=True, exist_ok=True)
         (self.cdir / f"{cid}.docx").write_bytes(dtp.render(template, spec, values, rows))
         self.store.audit(user.key, "contract_save", None, {"contract": cid, "number": number})
+        try:
+            deals = self._deals()
+            d = deals.get(deal_id) if deal_id else None
+            deals.on_contract(d["wa_id"] if d else None, deal_id or None, client or "", total, cid, number, user.key, now)
+        except Exception:
+            log.exception("deal update after contract %s failed", cid)
         return cid

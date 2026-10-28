@@ -81,6 +81,8 @@ class Digest:
         calls, usd = month_cost(self.store, end.astimezone(self.cfg.tz).date())
         if calls:
             lines += ["", f"🤖 AI bulan ini: {calls} pesan dicek · ±US${usd:.2f}"]
+        from .deals import Deals
+        lines += ["", *Deals(self.cfg, self.store).summary_lines(s, e)]
         from .learning import Learning
         ds = Learning(self.store).draft_stats(e - 7 * 86400, e)
         if ds["n"]:

@@ -111,6 +111,11 @@ access:
   team_domain: ""            # e.g. heroez.cloudflareaccess.com
   audience: ""               # Application Audience (AUD) tag from the Access application
 
+deals:
+  # Deal pipeline (Deal page + daily mirror to the ops Google Sheet). "Batal" is always available.
+  stages: [Lead, Proposal, Deal, Kontrak, Ditandatangani, Lunas]
+  sheet_webhook_url: ""      # Apps Script web app URL (docs/deals_sheet.gs); the token is the secret DEALS_SHEET_TOKEN
+
 retention:
   message_text_days: 90   # message texts are erased after this many days (UU PDP); states and metrics stay
   raw_webhook_days: 7     # raw webhook payloads (contain message text) are deleted after this

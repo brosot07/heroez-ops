@@ -33,8 +33,10 @@ SCHEMA = {
         "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
         "summary_id": {"type": "string"},
         "confidence": {"type": "number"},
+        "deal_signal": {"type": "string", "enum": ["none", "agreement", "proposal_requested"]},
+        "deal_value_idr": {"type": "integer"},
     },
-    "required": ["kind", "needs_reply", "priority", "summary_id", "confidence"],
+    "required": ["kind", "needs_reply", "priority", "summary_id", "confidence", "deal_signal", "deal_value_idr"],
     "additionalProperties": False,
 }
 
@@ -49,6 +51,8 @@ class Verdict:
     priority: str
     summary: str
     confidence: float
+    deal_signal: str = "none"          # none | agreement | proposal_requested
+    deal_value: int = 0                # Rp mentioned with the agreement, if any
 
 
 class Classifier(Protocol):
@@ -108,7 +112,9 @@ class ClaudeClassifier:
             data = json.loads(next(b.text for b in resp.content if b.type == "text"))
             return Verdict(kind=data["kind"], needs_reply=bool(data["needs_reply"]), priority=data["priority"],
                            summary=redact(data["summary_id"].strip())[:200],
-                           confidence=max(0.0, min(1.0, float(data["confidence"]))))
+                           confidence=max(0.0, min(1.0, float(data["confidence"]))),
+                           deal_signal=str(data.get("deal_signal") or "none"),
+                           deal_value=max(0, int(data.get("deal_value_idr") or 0)))
         except (StopIteration, ValueError, KeyError, TypeError):
             log.warning("Claude returned unexpected output; using text rules")
             return None

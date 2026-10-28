@@ -124,6 +124,10 @@ class SetupUI:
         raw.setdefault("whatsapp", {})["phone_number_id"] = "".join(ch for ch in g("phone_number_id") if ch.isdigit())
         if g("number_format"):
             raw.setdefault("contracts", {})["number_format"] = g("number_format")
+        dl = raw.setdefault("deals", {})
+        dl["sheet_webhook_url"] = g("deals_sheet_url")
+        if g("deal_stages"):
+            dl["stages"] = [s.strip() for s in g("deal_stages").split(",") if s.strip()]
         acc = raw.setdefault("access", {})
         acc["team_domain"] = g("access_team").removeprefix("https://").strip("/")
         acc["audience"] = g("access_aud")
@@ -143,7 +147,8 @@ class SetupUI:
         new_secrets = dict(old_secrets)
         for field, key in (("telegram_bot_token", "TELEGRAM_BOT_TOKEN"), ("meta_app_secret", "META_APP_SECRET"),
                            ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"), ("anthropic_api_key", "ANTHROPIC_API_KEY"),
-                           ("meta_access_token", "META_ACCESS_TOKEN"), ("urlhaus_key", "URLHAUS_AUTH_KEY")):
+                           ("meta_access_token", "META_ACCESS_TOKEN"), ("urlhaus_key", "URLHAUS_AUTH_KEY"),
+                           ("deals_sheet_token", "DEALS_SHEET_TOKEN")):
             if g(field):                      # blank = keep the existing value
                 new_secrets[key] = g(field)
             if form.get(f"clear_{field}"):
@@ -289,7 +294,7 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
 <div class="row"><div><label>Janji waktu balas <small>(dipakai di kalimat bot)</small></label><input type="text" name="sla_text" value="{_e((raw.get("bot") or {}).get("sla_text", "1 jam kerja"))}"></div>
 <div><label>Batas pesan bot per bulan</label><input type="number" name="send_budget" value="{_e((raw.get("bot") or {}).get("monthly_send_budget", 1000))}"></div></div></div>
 
-<div class="card"><h2>8. Kontrak</h2>
+<div class="card"><h2>8. Kontrak & deal</h2>
 <label style="font-weight:400"><input type="checkbox" name="pkp" {"checked" if (raw.get("tax") or {}).get("pkp") else ""}> Heroez adalah PKP (kontrak/invoice menghitung PPN 11%)</label>
 <label>Format nomor kontrak <small>({{seq:03d}} = urutan per tahun, {{roman_month}} = XI, {{year}} = 2026)</small></label>
 <input type="text" name="number_format" value="{_e((raw.get("contracts") or {}).get("number_format", "{seq:03d}/HRZ-KTR/{roman_month}/{year}"))}">
@@ -298,7 +303,12 @@ Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap p
 <label>Cloudflare Access Application Audience (AUD) tag</label>
 <input type="text" name="access_aud" value="{_e((raw.get("access") or {}).get("audience", ""))}">
 <p class="muted">Tanpa ini, halaman Kontrak hanya bisa dibuka dari komputer ini. Halaman kontrak dari laptop lain:
-<code>https://{_e(host) or "alamat-publik"}/kontrak</code></p></div>
+<code>https://{_e(host) or "alamat-publik"}/kontrak</code></p>
+<label>Tahap deal <small>(urut, pisahkan dengan koma; "Batal" selalu ada)</small></label>
+<input type="text" name="deal_stages" value="{_e(", ".join((raw.get("deals") or {}).get("stages") or ["Lead", "Proposal", "Deal", "Kontrak", "Ditandatangani", "Lunas"]))}">
+<label>Google Sheet deal: alamat web app Apps Script <small>(lihat docs/deals_sheet.gs; kosong = tidak dikirim)</small></label>
+<input type="text" name="deals_sheet_url" value="{_e((raw.get("deals") or {}).get("sheet_webhook_url", ""))}" placeholder="https://script.google.com/macros/s/.../exec">
+<label>Token Apps Script <small>({has("DEALS_SHEET_TOKEN")})</small></label><input type="password" name="deals_sheet_token" autocomplete="off"></div>
 
 <div class="card"><h2>9. WhatsApp & koneksi</h2>
 <label>Nomor WhatsApp Heroez <small>(dengan kode negara, mis. 62812…)</small></label><input type="text" name="business_number" value="{_e((raw.get("whatsapp") or {}).get("business_number", ""))}">
