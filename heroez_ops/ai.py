@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .db import Store
-from .notifier import redact
+from .textrules import redact
 
 log = logging.getLogger(__name__)
 

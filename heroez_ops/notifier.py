@@ -16,7 +16,9 @@ from .bizhours import BusinessClock
 from .config import Config
 from .db import Store
 from .escalation import Escalator
+from .drafts import parse_draft
 from .phone import display
+from .textrules import redact  # noqa: F401  (re-exported for callers)
 from .states import AWAITING_US, POSSIBLY_REPLIED
 
 log = logging.getLogger(__name__)
@@ -33,14 +35,6 @@ STEP_LABEL = {
 }
 KIND_LABEL = {"talent": "Talent", "existing_client": "Klien lama", "new": "Kontak baru"}
 
-_LONG_DIGITS = re.compile(r"\d[\d\s\-.]{6,}\d")
-
-
-def redact(text: str) -> str:
-    """Hide long digit runs (bank accounts, NIK, card numbers) in alerts."""
-    return _LONG_DIGITS.sub("•••", text)
-
-
 def human_duration(minutes: float) -> str:
     minutes = int(minutes)
     if minutes < 60:
@@ -56,6 +50,7 @@ class Notifier:
     def __init__(self, cfg: Config, store: Store, clock: BusinessClock, channel: AlertChannel):
         self.cfg, self.store, self.clock, self.channel = cfg, store, clock, channel
         self.escalator = Escalator(cfg, store, clock)
+        self.before_alert = None   # callable(wa_id): e.g. prepare an AI reply suggestion
 
     # -- recipients -----------------------------------------------------
     def chat_id(self, recipient: str) -> int:
@@ -77,6 +72,11 @@ class Notifier:
         """Called every minute: queue due steps, flush batches, morning list."""
         now_ts = int(now.timestamp())
         for d in self.escalator.due(now):
+            if self.before_alert and d.step in ("nudge", "reminder", "group", "urgent"):
+                try:
+                    self.before_alert(d.wa_id)
+                except Exception:
+                    log.exception("before_alert failed for %s", d.wa_id)
             for cid in dict.fromkeys(self.chat_id(r) for r in d.recipients):  # dedupe, keep order
                 if cid:
                     self.store.x("INSERT INTO outbox(chat_id,wa_id,step,created_at) VALUES(?,?,?,?)", (cid, d.wa_id, d.step, now_ts))
@@ -158,9 +158,26 @@ class Notifier:
         if step:
             head += f"\n{STEP_LABEL[step]}"
         ai_line = f"🤖 {html.escape(c['ai_summary'])}" if c and c["ai_summary"] and not c["ai_pending"] else ""
-        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet,
+        draft_line = ""
+        if c and c["draft_text"] and self._draft_current(c):
+            reply, missing, can = parse_draft(c)
+            if can and reply:
+                draft_line = f"💡 <b>Saran balasan:</b>\n<i>{html.escape(reply)}</i>"
+            elif missing:
+                draft_line = f"💡 AI belum bisa menjawab: {html.escape(missing)}" + (
+                    f"\n<i>{html.escape(reply)}</i>" if reply else "")
+        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet, draft_line,
                  f'<a href="https://wa.me/{wa_id}">Buka chat</a>']
         return "\n".join(p for p in parts if p)
+
+    def _draft_current(self, c) -> bool:
+        last = self.store.one("SELECT id FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (c["wa_id"],))
+        return bool(last and last["id"] == c["draft_msg_id"])
+
+    def can_send_draft(self, wa_id: str) -> bool:
+        c = self.store.one("SELECT * FROM conversations WHERE wa_id=?", (wa_id,))
+        return bool(c and c["draft_text"] and self._draft_current(c) and parse_draft(c)[0]
+                    and (parse_draft(c)[2] or parse_draft(c)[0]))
 
     def render(self, items: list[tuple[str, str]], now: dt.datetime) -> tuple[str, list[list[Button]]]:
         if len(items) == 1:
@@ -170,12 +187,15 @@ class Notifier:
                 [Button("✋ Saya ambil", f"claim:{wa_id}"), Button("✅ Sudah dibalas", f"done:{wa_id}")],
                 [Button("⏰ Tunda 1 jam", f"snooze:{wa_id}"), Button("🚫 Bukan urusan kita", f"nope:{wa_id}")],
             ]
+            if self.can_send_draft(wa_id):
+                buttons.append([Button("📤 Kirim saran ini", f"send:{wa_id}")])
             return text, buttons
         blocks = [f"{i}. " + self.item_lines(wa_id, now, step) for i, (wa_id, step) in enumerate(items, 1)]
-        legend = "Tombol: ✋ Saya ambil · ✅ Sudah dibalas · ⏰ Tunda 1 jam · 🚫 Bukan urusan kita"
+        legend = "Tombol: ✋ Saya ambil · ✅ Sudah dibalas · ⏰ Tunda 1 jam · 🚫 Bukan urusan kita · 📤 Kirim saran"
         text = f"<b>{len(items)} chat perlu dibalas</b>\n\n" + "\n\n".join(blocks) + f"\n\n<i>{legend}</i>"
         buttons = [
             [Button(f"✋{i}", f"claim:{w}"), Button(f"✅{i}", f"done:{w}"), Button(f"⏰{i}", f"snooze:{w}"), Button(f"🚫{i}", f"nope:{w}")]
+            + ([Button(f"📤{i}", f"send:{w}")] if self.can_send_draft(w) else [])
             for i, (w, _) in enumerate(items, 1)
         ]
         return text, buttons
@@ -217,15 +237,18 @@ class Notifier:
             return
         self.store.set_kv(key, str(int(time.time())))
         waiting = self.store.q("SELECT assignee FROM conversations WHERE state IN (?,?)", (AWAITING_US, POSSIBLY_REPLIED))
-        if not waiting:
+        spam = self.store.one("SELECT COUNT(*) n FROM intake WHERE status='spam' AND updated_at>?",
+                              (int(now.timestamp()) - 86400,))["n"]
+        if not waiting and not spam:
             return
+        spam_line = f"\n\n🗑️ {spam} pesan diduga spam kemarin (tidak dibalas). Cek dengan /spam." if spam else ""
         mine = {r["assignee"] for r in self.store.q("SELECT assignee FROM conversations WHERE state=?", (AWAITING_US,))}
         for a in self.cfg.admins:
             if a.telegram_id and a.key in mine:
                 self.channel.send(a.telegram_id, "☀️ Selamat pagi!\n\n" + self.queue_text(a.key, now))
         for s in self.cfg.supervisors:
             if s.telegram_id:
-                self.channel.send(s.telegram_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now))
+                self.channel.send(s.telegram_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now) + spam_line)
         if self.cfg.admin_group_id:
-            self.channel.send(self.cfg.admin_group_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now))
+            self.channel.send(self.cfg.admin_group_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now) + spam_line)
         self.store.audit("system", "morning_list", None, None, int(now.timestamp()))

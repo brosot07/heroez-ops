@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -9,7 +10,9 @@ import logging
 from .alerts.base import AlertChannel, Button
 from .config import Config
 from .db import Store
+from .drafts import parse_draft
 from .notifier import Notifier
+from .sources.meta_send import SendError
 from .phone import display, normalize
 from .states import Engine
 
@@ -20,6 +23,7 @@ HELP = (
     "/antrian – chat yang menunggu balasan kamu\n"
     "/semua – semua chat yang menunggu\n"
     "/cari &lt;nama atau nomor&gt; – cari kontak\n"
+    "/spam – pesan yang diduga spam (tidak dibalas bot)\n"
     "/bantuan – pesan ini\n\n"
     "Tombol di notifikasi:\n"
     "✋ Saya ambil – chat jadi tanggung jawab kamu\n"
@@ -37,8 +41,10 @@ TOAST = {
 
 
 class Bot:
-    def __init__(self, cfg: Config, store: Store, engine: Engine, notifier: Notifier, channel: AlertChannel):
+    def __init__(self, cfg: Config, store: Store, engine: Engine, notifier: Notifier, channel: AlertChannel,
+                 sender=None, intake=None):
         self.cfg, self.store, self.engine, self.notifier, self.channel = cfg, store, engine, notifier, channel
+        self.sender, self.intake = sender, intake
 
     def _actor(self, user_id: int) -> str | None:
         """Admin key, 'spv:<key>', 'mgmt:<id>', or None if not allowed."""
@@ -81,8 +87,17 @@ class Bot:
             return
         action, _, wa_id = (cq.get("data") or "").partition(":")
         at = int(now.timestamp())
-        if not self.engine.conversation(wa_id):
+        if not self.engine.conversation(wa_id.split(":")[0]):
             self.channel.answer_callback(cq.get("id", ""), "Chat tidak ditemukan.")
+            return
+        if action == "notspam":
+            if self.intake and self.intake.not_spam(wa_id, self._name(actor)):
+                self.channel.answer_callback(cq["id"], "✅ Diteruskan ke admin sebagai chat biasa.")
+            else:
+                self.channel.answer_callback(cq["id"], "Sudah ditangani.")
+            return
+        if action in ("send", "sendok", "sendno"):
+            self._send_draft(cq, action, wa_id, actor, now)
             return
         if action == "claim":
             if not self.cfg.admin(actor):
@@ -100,6 +115,57 @@ class Bot:
         self.channel.answer_callback(cq["id"], TOAST[action])
 
         self._update_alert(cq.get("message") or {}, action, wa_id, actor, now)
+
+    def _send_draft(self, cq: dict, action: str, data: str, actor: str, now: dt.datetime) -> None:
+        """📤 Kirim: show the draft and ask for confirmation; on ✅ send it through the Cloud API."""
+        wa_id, _, digest = data.partition(":")
+        conv = self.engine.conversation(wa_id)
+        chat_id = (cq.get("message") or {}).get("chat", {}).get("id")
+        if action == "sendno":
+            self.channel.answer_callback(cq["id"], "Dibatalkan.")
+            if cq.get("message"):
+                self.channel.edit(chat_id, cq["message"]["message_id"], "❌ Tidak dikirim.", None)
+            return
+        if not self.sender or not self.notifier.can_send_draft(wa_id):
+            self.channel.answer_callback(cq["id"], "Saran sudah tidak berlaku (ada pesan baru atau sudah dibalas).")
+            return
+        reply = parse_draft(conv)[0]
+        h = hashlib.sha256(reply.encode()).hexdigest()[:8]
+        ct = self.store.one("SELECT name FROM contacts WHERE wa_id=?", (wa_id,))
+        name = html.escape((ct["name"] if ct and ct["name"] else display(wa_id)))
+        if action == "send":
+            self.channel.answer_callback(cq["id"], "Cek dulu sebelum dikirim.")
+            self.channel.send(chat_id, f"Kirim pesan ini ke <b>{name}</b> lewat WhatsApp Heroez?\n\n<i>{html.escape(reply)}</i>\n\n"
+                                       "<small>Mau mengubah kata-katanya? Salin dan kirim sendiri dari WhatsApp (gratis).</small>",
+                              [[Button("✅ Ya, kirim", f"sendok:{wa_id}:{h}"), Button("❌ Batal", f"sendno:{wa_id}")]])
+            return
+        # sendok
+        if digest != h:
+            self.channel.answer_callback(cq["id"], "Saran sudah berubah; buka notifikasi terbaru.")
+            return
+        if not conv["last_inbound_at"] or now.timestamp() - conv["last_inbound_at"] > 24 * 3600:
+            self.channel.answer_callback(cq["id"], "Sudah lewat 24 jam sejak pesan klien: balas dari WhatsApp saja.")
+            return
+        if not self.sender.live:
+            self.channel.answer_callback(cq["id"], "Mode shadow / bot belum aktif: pesan tidak dikirim.")
+            self.store.audit(actor, "draft_send_shadow", wa_id, {"reply": reply[:200]})
+            return
+        try:
+            mid = self.sender.text(wa_id, reply, purpose="draft")
+        except SendError as e:
+            self.channel.answer_callback(cq["id"], f"Gagal: {e}"[:190])
+            return
+        from .sources.base import MessageEvent
+        self.engine.handle(MessageEvent(direction="out", source="api", wa_id=wa_id, msg_id=mid, ts=int(now.timestamp()),
+                                        type="text", text=reply, raw={"sent_by": actor}))
+        if self.intake:
+            self.intake.on_event(MessageEvent(direction="out", source="api", wa_id=wa_id, msg_id=mid,
+                                              ts=int(now.timestamp()), type="text", text=reply))
+        self.store.audit(actor, "draft_sent", wa_id, {"message": mid})
+        self.channel.answer_callback(cq["id"], "📤 Terkirim.")
+        if cq.get("message"):
+            self.channel.edit(chat_id, cq["message"]["message_id"],
+                              f"📤 Terkirim ke <b>{name}</b> oleh {html.escape(self._name(actor))}:\n<i>{html.escape(reply)}</i>", None)
 
     def _update_alert(self, msg: dict, action: str, wa_id: str, actor: str, now: dt.datetime) -> None:
         """Leave a visible trace on the alert so everyone sees who handled it."""
@@ -146,6 +212,18 @@ class Bot:
             self.channel.send(chat_id, self.notifier.queue_text(key, now))
         elif cmd == "/semua":
             self.channel.send(chat_id, self.notifier.queue_text(None, now))
+        elif cmd == "/spam":
+            rows = self.store.q("SELECT i.wa_id, i.outcome, i.updated_at, c.name FROM intake i JOIN contacts c USING(wa_id) "
+                                "WHERE i.status='spam' AND i.updated_at>? ORDER BY i.updated_at DESC LIMIT 10",
+                                (int(now.timestamp()) - 7 * 86400,))
+            if not rows:
+                self.channel.send(chat_id, "🟢 Tidak ada pesan yang diduga spam dalam 7 hari terakhir.")
+            for r in rows:
+                last = self.store.one("SELECT text FROM messages WHERE wa_id=? AND direction='in' ORDER BY ts DESC LIMIT 1", (r["wa_id"],))
+                body = html.escape(((last["text"] if last else "") or "")[:200])
+                self.channel.send(chat_id, f"🗑️ <b>{html.escape(r['name'] or display(r['wa_id']))}</b> ({display(r['wa_id'])})\n"
+                                           f"AI: {html.escape(r['outcome'] or '')}\n💬 “{body}”",
+                                  [[Button("Bukan spam → teruskan ke admin", f"notspam:{r['wa_id']}")]])
         elif cmd == "/cari":
             self.channel.send(chat_id, self.search(arg.strip(), now))
         self.store.audit(actor, "command", None, cmd)

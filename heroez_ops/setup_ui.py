@@ -110,6 +110,14 @@ class SetupUI:
 
         raw.setdefault("ai", {})["enabled"] = bool(form.get("ai_enabled"))
         raw.setdefault("tax", {})["pkp"] = bool(form.get("pkp"))
+        b = raw.setdefault("bot", {})
+        b["intake_enabled"], b["faq_auto_send"], b["drafts_enabled"] = (bool(form.get("intake_enabled")),
+                                                                         bool(form.get("faq_auto_send")), bool(form.get("drafts_enabled")))
+        if g("sla_text"):
+            b["sla_text"] = g("sla_text")
+        if g("send_budget").isdigit():
+            b["monthly_send_budget"] = int(g("send_budget"))
+        raw.setdefault("whatsapp", {})["phone_number_id"] = "".join(ch for ch in g("phone_number_id") if ch.isdigit())
         if g("number_format"):
             raw.setdefault("contracts", {})["number_format"] = g("number_format")
         acc = raw.setdefault("access", {})
@@ -130,7 +138,8 @@ class SetupUI:
 
         new_secrets = dict(old_secrets)
         for field, key in (("telegram_bot_token", "TELEGRAM_BOT_TOKEN"), ("meta_app_secret", "META_APP_SECRET"),
-                           ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"), ("anthropic_api_key", "ANTHROPIC_API_KEY")):
+                           ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"), ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+                           ("meta_access_token", "META_ACCESS_TOKEN")):
             if g(field):                      # blank = keep the existing value
                 new_secrets[key] = g(field)
             if form.get(f"clear_{field}"):
@@ -217,7 +226,7 @@ class SetupUI:
 
         return f"""<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heroez Ops Settings</title><style>{CSS}</style></head><body>
-<nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/" class="on">Pengaturan</a></nav><main>
+<nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/pengetahuan">Pengetahuan</a><a href="/" class="on">Pengaturan</a></nav><main>
 <h1>Heroez Ops: Pengaturan</h1><p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>{msg}
 <div class="card"><h2>Status</h2>
 <p>Mode: <b>{"LIVE (notifikasi dikirim)" if raw.get("mode") == "live" else "SHADOW (hanya dicatat, belum dikirim)"}</b><br>
@@ -266,7 +275,16 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
 <label>Claude API key <small>(console.anthropic.com → API keys) · {has("ANTHROPIC_API_KEY")}</small></label>
 <input type="password" name="anthropic_api_key" autocomplete="off"></div>
 
-<div class="card"><h2>7. Kontrak</h2>
+<div class="card"><h2>7. Bot WhatsApp (balasan otomatis)</h2>
+<p class="muted">Bot hanya menyapa kontak <b>baru</b> (bukan talent / klien lama), berhenti begitu admin membalas, dan hanya terkirim di mode Live.
+Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
+<label style="font-weight:400"><input type="checkbox" name="intake_enabled" {"checked" if (raw.get("bot") or {}).get("intake_enabled") else ""}> Bot menyapa kontak baru: saring spam, tanya kebutuhan brand, kirim rate & ketersediaan talent, lalu serahkan ke admin</label>
+<label style="font-weight:400"><input type="checkbox" name="faq_auto_send" {"checked" if (raw.get("bot") or {}).get("faq_auto_send") else ""}> Kirim jawaban FAQ otomatis (hanya yang disetujui & pertanyaannya persis sama)</label>
+<label style="font-weight:400"><input type="checkbox" name="drafts_enabled" {"checked" if (raw.get("bot") or {}).get("drafts_enabled", True) else ""}> Saran balasan AI di notifikasi Telegram (terkirim hanya jika admin menekan 📤 Kirim)</label>
+<div class="row"><div><label>Janji waktu balas <small>(dipakai di kalimat bot)</small></label><input type="text" name="sla_text" value="{_e((raw.get("bot") or {}).get("sla_text", "1 jam kerja"))}"></div>
+<div><label>Batas pesan bot per bulan</label><input type="number" name="send_budget" value="{_e((raw.get("bot") or {}).get("monthly_send_budget", 1000))}"></div></div></div>
+
+<div class="card"><h2>8. Kontrak</h2>
 <label style="font-weight:400"><input type="checkbox" name="pkp" {"checked" if (raw.get("tax") or {}).get("pkp") else ""}> Heroez adalah PKP (kontrak/invoice menghitung PPN 11%)</label>
 <label>Format nomor kontrak <small>({{seq:03d}} = urutan per tahun, {{roman_month}} = XI, {{year}} = 2026)</small></label>
 <input type="text" name="number_format" value="{_e((raw.get("contracts") or {}).get("number_format", "{seq:03d}/HRZ-KTR/{roman_month}/{year}"))}">
@@ -277,9 +295,11 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
 <p class="muted">Tanpa ini, halaman Kontrak hanya bisa dibuka dari komputer ini. Halaman kontrak dari laptop lain:
 <code>https://{_e(host) or "alamat-publik"}/kontrak</code></p></div>
 
-<div class="card"><h2>8. WhatsApp & koneksi</h2>
+<div class="card"><h2>9. WhatsApp & koneksi</h2>
 <label>Nomor WhatsApp Heroez <small>(dengan kode negara, mis. 62812…)</small></label><input type="text" name="business_number" value="{_e((raw.get("whatsapp") or {}).get("business_number", ""))}">
 <label>Meta App Secret <small>· {has("META_APP_SECRET")}</small></label><input type="password" name="meta_app_secret" autocomplete="off">
+<label>Phone number ID <small>(Meta app → WhatsApp → API Setup; untuk bot)</small></label><input type="text" name="phone_number_id" value="{_e((raw.get("whatsapp") or {}).get("phone_number_id", ""))}">
+<label>Meta access token <small>(System user token, permanen · {has("META_ACCESS_TOKEN")})</small></label><input type="password" name="meta_access_token" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">
 <label>Cloudflare Tunnel token <small>· {has("CLOUDFLARE_TUNNEL_TOKEN")}</small></label><input type="password" name="tunnel_token" autocomplete="off"></div>
 

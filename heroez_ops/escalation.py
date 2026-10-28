@@ -33,7 +33,8 @@ class Escalator:
     def due(self, now: dt.datetime) -> list[Due]:
         e = self.cfg.escalation
         out: list[Due] = []
-        rows = self.store.q("SELECT * FROM conversations WHERE state=? AND waiting_since IS NOT NULL", (AWAITING_US,))
+        rows = self.store.q("SELECT * FROM conversations WHERE state=? AND waiting_since IS NOT NULL "
+                            "AND wa_id NOT IN (SELECT wa_id FROM intake WHERE status='active')", (AWAITING_US,))
         now_ts = _ts(now)
         for c in rows:
             if c["ai_pending"] and now_ts - (c["last_inbound_at"] or 0) < self.cfg.ai_wait_minutes * 60:

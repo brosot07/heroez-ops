@@ -36,6 +36,14 @@ QUESTION = re.compile(
     re.I,
 )
 
+_LONG_DIGITS = re.compile(r"\d[\d\s\-.]{6,}\d")
+
+
+def redact(text: str) -> str:
+    """Hide long digit runs (bank accounts, NIK, card numbers) before alerts or AI calls."""
+    return _LONG_DIGITS.sub("•••", text)
+
+
 _WORD = re.compile(r"[a-z0-9]+")
 
 

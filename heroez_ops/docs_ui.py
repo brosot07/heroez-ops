@@ -65,8 +65,8 @@ class ContractsUI:
 
     def router(self, local: bool) -> APIRouter:
         r = APIRouter()
-        nav = ([("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengaturan", "/")] if local
-               else [("Kontrak", "/kontrak"), ("Template", "/template")])
+        nav = ([("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan"), ("Pengaturan", "/")] if local
+               else [("Kontrak", "/kontrak"), ("Template", "/template"), ("Pengetahuan", "/pengetahuan")])
 
         def who(request: Request) -> User:
             return OWNER if local else remote_user(request, self.cfg(), self.verifier())
@@ -79,6 +79,9 @@ class ContractsUI:
 
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
             return HTMLResponse(page(title, body, nav, active, f"{user.name}", message, ok))
+
+        from . import kb_ui
+        kb_ui.add_routes(r, self, who, form, show)
 
         # -- contracts ------------------------------------------------------
         @r.get("/kontrak", response_class=HTMLResponse)

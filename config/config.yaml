@@ -23,6 +23,19 @@ whatsapp:
   # The Heroez number, digits only with country code (e.g. 6281234567890).
   business_number: "6280000000000"
   window_hours: 24
+  phone_number_id: ""          # Meta app > WhatsApp > API Setup (needed for the bot to send)
+  graph_api_version: "v23.0"   # check the current version in Meta's docs when connecting
+
+bot:
+  # Phase 2. Bot messages are sent only in live mode AND when switched on here.
+  intake_enabled: false        # fixed menu for new unknown contacts (never talents / existing clients)
+  faq_auto_send: false         # send an approved FAQ answer word for word when the question matches exactly
+  drafts_enabled: true         # AI reply suggestion in Telegram alerts, sent only after an admin taps Kirim
+  drafts_model: claude-sonnet-5-5
+  max_drafts_per_day: 150
+  sla_text: "1 jam kerja"      # used in the bot's "we will reply within ..." line
+  intake_timeout_minutes: 15   # client stops tapping the menu -> hand over to a human
+  monthly_send_budget: 1000    # messages the bot may send per month; alert at 80%
 
 admins:
   # telegram_id: numeric Telegram user ID. Each person sends /start to the Heroez bot,

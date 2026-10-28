@@ -55,6 +55,18 @@ Mention this in the data-flow note for clients and talents.
 settings page, and fill in everyone's email in sections 3 and 4. Admins can make contracts; only supervisors (and this PC)
 can upload or approve templates. Never add `/webhook/*` to the Access app (Meta and Telegram must reach it).
 
+## 3d. WhatsApp bot for new brands (Phase 2)
+1. **Pengetahuan** page: upload the KOL list (Excel/CSV, one row per KOL; columns starting with "Rate" are prices;
+   phone/handler/internal-note columns are never shown), the availability sheet (Nama, Mulai, Selesai: booked dates only),
+   the rate card PDF, FAQ answers and the bot's texts. *Download contoh* gives an example sheet.
+2. Settings, section 7: tick the bot options, set the reply-time promise and the monthly message limit.
+   Section 9: the Meta **Phone number ID** and a permanent **System user access token** (from the Meta app).
+3. Keep **Shadow** mode for the first week: the bot's would-be messages are written to
+   `data\shadow_alerts.jsonl` (type `whatsapp_send`) so you can read exactly what it would have said.
+4. What the bot does: ignores spam (listed daily, `/spam` in Telegram to rescue), asks brands what they need and which
+   KOLs, replies with each KOL's rate and ✅/❌ availability straight from your sheets, then hands over to an admin.
+   Talents and existing clients never get the bot; it stops as soon as an admin replies.
+
 ## 4. Meta (WhatsApp)
 Follow `SETUP_RUNBOOK.md` for the Meta app and coexistence onboarding. In the Meta app's WhatsApp → Configuration:
 - **Callback URL** and **Verify token**: copy them from the top of our settings page.

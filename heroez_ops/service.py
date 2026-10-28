@@ -15,9 +15,14 @@ from .bot import Bot
 from .config import Config
 from .db import Store
 from .digest import Digest
+from .drafts import Drafter
+from .concierge_ai import ConciergeAI
+from .intake import Intake
+from .kb import KB
 from .notifier import Notifier
 from .sources.base import MessageEvent
 from .sources.meta import MetaCoexistenceSource
+from .sources.meta_send import MetaSender, month_sends
 from .states import Engine
 
 log = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ log = logging.getLogger(__name__)
 class Service:
     def __init__(self, cfg: Config, store: Store, alert_channel: AlertChannel | None = None,
                  reply_channel: AlertChannel | None = None, data_dir: Path = Path("data"),
-                 classifier: Classifier | None = None):
+                 classifier: Classifier | None = None, sender: MetaSender | None = None, drafter=None):
         self.cfg, self.store = cfg, store
         self.data_dir = Path(data_dir) if data_dir else None
         self.clock = BusinessClock(cfg)
@@ -45,7 +50,23 @@ class Service:
         self.reply_channel = reply_channel or telegram or self.alert_channel
         self.notifier = Notifier(cfg, store, self.clock, self.alert_channel)
         self.digest = Digest(cfg, store, self.clock)
-        self.bot = Bot(cfg, store, self.engine, Notifier(cfg, store, self.clock, self.reply_channel), self.reply_channel)
+        # Phase 2: knowledge base, Cloud API sender (shadow unless live), menu bot, reply drafts.
+        self.kb = KB(store)
+        shadow_dir = Path(data_dir) if data_dir else Path("data")
+        self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
+                                           live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
+        concierge = None
+        if cfg.intake_enabled and cfg.anthropic_api_key and self.classifier is not None:
+            concierge = ConciergeAI(cfg.anthropic_api_key, store, cfg.tz, model=cfg.ai_model)
+        self.intake = Intake(cfg, store, self.engine, self.kb, self.sender, shadow_dir / "kb", ai=concierge)
+        self.drafter = drafter
+        if self.drafter is None and cfg.drafts_enabled and cfg.anthropic_api_key:
+            self.drafter = Drafter(cfg.anthropic_api_key, store, self.kb, cfg.tz, model=cfg.drafts_model,
+                                   max_per_day=cfg.max_drafts_per_day)
+        if self.drafter:
+            self.notifier.before_alert = self.drafter.ensure
+        reply_notifier = Notifier(cfg, store, self.clock, self.reply_channel)
+        self.bot = Bot(cfg, store, self.engine, reply_notifier, self.reply_channel, sender=self.sender, intake=self.intake)
 
     # -- ingest -----------------------------------------------------------
     def accept_webhook(self, source: str, body: bytes) -> None:
@@ -71,6 +92,11 @@ class Service:
         events.sort(key=lambda e: e.ts if isinstance(e, MessageEvent) else 0)
         for ev in events:
             self.engine.handle(ev)
+            if isinstance(ev, MessageEvent) and not self.engine.last_was_duplicate:
+                try:
+                    self.intake.on_event(ev)
+                except Exception:
+                    log.exception("intake failed for %s", ev.wa_id)
 
     # -- Telegram long polling -------------------------------------------
     def poll_telegram_once(self, wait_seconds: int = 25) -> int:
@@ -92,18 +118,35 @@ class Service:
     def tick(self, now: dt.datetime | None = None) -> None:
         now = now or dt.datetime.now(dt.timezone.utc)
         self.process_inbox()
+        self.intake.expire(int(now.timestamp()))
         self.classify_pending(now)
         self.notifier.tick(now)
         self.digest.maybe_send(now, self.alert_channel)
         self.check_quiet_inbox(now)
         self.daily_maintenance(now)
+        self.check_send_budget(now)
+
+    def check_send_budget(self, now: dt.datetime) -> None:
+        """Warn supervisors once a month when bot sends pass 80% of the monthly budget."""
+        used = month_sends(self.store)
+        month = now.astimezone(self.cfg.tz).strftime("%Y-%m")
+        if used < 0.8 * self.cfg.monthly_send_budget or self.store.get_kv(f"send_budget_warned:{month}"):
+            return
+        self.store.set_kv(f"send_budget_warned:{month}", "1")
+        text = (f"⚠️ Bot sudah mengirim {used} pesan bulan ini (batas {self.cfg.monthly_send_budget}). "
+                f"Meta gratis sampai 1.000 pesan per bulan; setelah itu ±Rp400 per pesan. "
+                f"Bot berhenti otomatis saat batas tercapai. Ubah batas di Pengaturan.")
+        for s in self.cfg.supervisors:
+            if s.telegram_id:
+                self.reply_channel.send(s.telegram_id, text)
 
     def classify_pending(self, now: dt.datetime, limit: int = 30) -> int:
         """Run the AI check on chats whose latest client message hasn't been checked yet."""
         if not self.classifier:
             return 0
         rows = self.store.q("SELECT c.wa_id, c.ai_msg_id, ct.kind FROM conversations c JOIN contacts ct USING(wa_id) "
-                            "WHERE c.ai_pending=1 ORDER BY c.last_inbound_at LIMIT ?", (limit,))
+                            "WHERE c.ai_pending=1 AND c.wa_id NOT IN (SELECT wa_id FROM intake WHERE status='active') "
+                            "ORDER BY c.last_inbound_at LIMIT ?", (limit,))
         for r in rows:
             msgs = self.store.q("SELECT direction, ts, type, text FROM messages WHERE wa_id=? ORDER BY ts DESC LIMIT ?",
                                 (r["wa_id"], self.cfg.ai_context_messages))

@@ -143,6 +143,42 @@ CREATE TABLE IF NOT EXISTS contracts (
     updated_at INTEGER NOT NULL,
     updated_by TEXT
 );
+CREATE TABLE IF NOT EXISTS kb (
+    name TEXT PRIMARY KEY,                   -- faq | info | texts | ratecard_media
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT
+);
+CREATE TABLE IF NOT EXISTS api_sends (
+    month TEXT NOT NULL,
+    purpose TEXT NOT NULL,                   -- intake | faq | draft
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (month, purpose)
+);
+CREATE TABLE IF NOT EXISTS intake (
+    wa_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,                    -- active | done | stopped
+    step TEXT NOT NULL,
+    lang TEXT NOT NULL DEFAULT 'id',
+    data TEXT NOT NULL DEFAULT '{}',
+    first_msg_ts INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    outcome TEXT
+);
+CREATE TABLE IF NOT EXISTS talents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,                      -- {"info": {...public...}, "rates": {"Rate IG Reels": 15000000}}
+    phone TEXT,                              -- private: routing only
+    handler TEXT,                            -- private: admin key
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS talent_busy (
+    talent_id INTEGER NOT NULL,              -- only dates are stored, never what the booking is
+    start TEXT NOT NULL,
+    end TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -170,6 +206,9 @@ class Store:
             ("ai_kind", "TEXT"),
             ("ai_summary", "TEXT"),
             ("ai_confidence", "REAL"),
+            ("draft_text", "TEXT"),                         # AI reply suggestion for the current wait
+            ("draft_msg_id", "TEXT"),                       # client message the draft answers
+            ("draft_can_answer", "INTEGER"),
         ],
     }
 

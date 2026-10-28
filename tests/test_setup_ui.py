@@ -61,3 +61,14 @@ def test_page_needs_csrf_and_local_host(ui):
     r = c.post("/save", data={**FORM, "csrf": ui.csrf})
     assert "Tersimpan" in r.text and ui.restarted == [1]
     assert "123:abc" not in c.get("/").text               # secrets never shown back
+
+
+def test_bot_switches_and_meta_token(ui, tmp_path):
+    form = {**FORM, "intake_enabled": "on", "sla_text": "30 menit", "send_budget": "800", "phone_number_id": "1234 5678",
+            "meta_access_token": "EAAG-secret"}
+    raw, sec = ui.apply_form(ui.raw(), form, {})
+    ui.save(raw, sec)
+    cfg = load_config(tmp_path / "config" / "config.yaml")
+    assert cfg.intake_enabled and not cfg.faq_auto_send and not cfg.drafts_enabled
+    assert cfg.sla_text == "30 menit" and cfg.monthly_send_budget == 800 and cfg.phone_number_id == "12345678"
+    assert secretstore.load(tmp_path / "secrets.bin")["META_ACCESS_TOKEN"] == "EAAG-secret"

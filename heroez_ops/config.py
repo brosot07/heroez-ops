@@ -83,6 +83,18 @@ class Config:
     pkp: bool = False                   # Heroez charges PPN
     ppn_rate: float = 0.11              # effective PPN rate (12% x 11/12)
     contract_number_format: str = "{seq:03d}/HRZ-KTR/{roman_month}/{year}"
+    # Phase 2: bot replies through the Cloud API
+    meta_access_token: str = ""
+    phone_number_id: str = ""
+    graph_api_version: str = "v23.0"
+    intake_enabled: bool = False
+    faq_auto_send: bool = False
+    drafts_enabled: bool = True
+    drafts_model: str = "claude-sonnet-5-5"
+    max_drafts_per_day: int = 150
+    sla_text: str = "1 jam kerja"
+    intake_timeout_minutes: int = 15
+    monthly_send_budget: int = 1000
     message_text_days: int = 90
     raw_webhook_days: int = 7
     backup_keep: int = 14
@@ -234,6 +246,17 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         access_audience=str((raw.get("access") or {}).get("audience", "") or ""),
         pkp=bool((raw.get("tax") or {}).get("pkp", False)),
         ppn_rate=float((raw.get("tax") or {}).get("ppn_effective_rate", 0.11)),
+        meta_access_token=os.environ.get("META_ACCESS_TOKEN", ""),
+        phone_number_id=str(wa.get("phone_number_id", "") or ""),
+        graph_api_version=str(wa.get("graph_api_version", "v23.0") or "v23.0"),
+        intake_enabled=bool((raw.get("bot") or {}).get("intake_enabled", False)),
+        faq_auto_send=bool((raw.get("bot") or {}).get("faq_auto_send", False)),
+        drafts_enabled=bool((raw.get("bot") or {}).get("drafts_enabled", True)),
+        drafts_model=str((raw.get("bot") or {}).get("drafts_model", "claude-sonnet-5-5")),
+        max_drafts_per_day=int((raw.get("bot") or {}).get("max_drafts_per_day", 150)),
+        sla_text=str((raw.get("bot") or {}).get("sla_text", "1 jam kerja")),
+        intake_timeout_minutes=int((raw.get("bot") or {}).get("intake_timeout_minutes", 15)),
+        monthly_send_budget=int((raw.get("bot") or {}).get("monthly_send_budget", 1000)),
         contract_number_format=str((raw.get("contracts") or {}).get("number_format",
                                                                    "{seq:03d}/HRZ-KTR/{roman_month}/{year}")),
         message_text_days=int((raw.get("retention") or {}).get("message_text_days", 90)),

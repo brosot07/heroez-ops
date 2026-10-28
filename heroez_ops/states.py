@@ -42,7 +42,8 @@ class Engine:
         self.cfg = cfg
         self.store = store
         self.roster: dict[str, dict] = {}
-        self.ai_enabled = False   # set by Service when a Claude API key is configured
+        self.ai_enabled = False
+        self.last_was_duplicate = False   # set by Service when a Claude API key is configured
         self.load_roster()
 
     # -- roster ---------------------------------------------------------
@@ -64,6 +65,14 @@ class Engine:
                         problems.append(f"Roster baris {i}: handler '{handler}' bukan admin yang terdaftar")
                         handler = None
                     roster[wa] = {"name": (row.get("name") or "").strip(), "handler": handler}
+        # Talents from the KOL list uploaded on the Pengetahuan page also count.
+        try:
+            from .talents import roster_for_routing
+            keys = {a.key for a in self.cfg.admins}
+            for wa, handler in roster_for_routing(self.store).items():
+                roster.setdefault(wa, {"name": "", "handler": handler if handler in keys else None})
+        except Exception:
+            log.exception("could not read KOL list for routing")
         self.roster = roster
         for wa, r in roster.items():
             self._ensure_contact(wa, r["name"], 0)
@@ -135,6 +144,7 @@ class Engine:
 
         with self.store.tx():
             dup = self.store.one("SELECT 1 FROM messages WHERE id=?", (ev.msg_id,))
+            self.last_was_duplicate = bool(dup)
             if dup:
                 return None
             self._ensure_contact(ev.wa_id, ev.contact_name, ev.ts)
@@ -230,6 +240,27 @@ class Engine:
     def ai_failed(self, wa_id: str) -> None:
         """Give up on the AI for this message; the text-rule state stands."""
         self.store.x("UPDATE conversations SET ai_pending=0 WHERE wa_id=?", (wa_id,))
+
+    # -- bot ----------------------------------------------------------------
+    def record_bot_message(self, wa_id: str, msg_id: str, body: str, ts: int) -> None:
+        """A menu/FAQ message the bot sent. Stored for context; not a human reply."""
+        self.store.x("INSERT OR IGNORE INTO messages(id,wa_id,direction,source,ts,type,text,raw,created_at) "
+                     "VALUES(?,?,?,?,?,?,?,?,?)", (msg_id, wa_id, "out", "bot", ts, "text", body, "{}", ts))
+
+    def handoff(self, wa_id: str, summary: str, priority: str, since: int, at: int) -> Change | None:
+        """The bot is done; a human must reply now. Starts the normal reminder clock."""
+        change = self._set_state(wa_id, AWAITING_US, f"bot: {summary}", at, waiting_since=since, fired_steps="[]",
+                                 ai_pending=0, ai_summary=summary, priority=priority, snoozed_until=None)
+        self._assign(wa_id, at)
+        return change
+
+    def mark_spam(self, wa_id: str, summary: str, at: int) -> Change | None:
+        return self._set_state(wa_id, CLOSED, f"diduga spam (AI): {summary}"[:300], at, waiting_since=None,
+                               fired_steps="[]", ai_pending=0, ai_msg_id=None, ai_summary=summary)
+
+    def mark_answered_by_bot(self, wa_id: str, reason: str, at: int) -> Change | None:
+        return self._set_state(wa_id, AWAITING_THEM, reason, at, waiting_since=None, fired_steps="[]",
+                               ai_pending=0, ai_msg_id=None)
 
     # -- admin actions (Telegram buttons) ------------------------------
     def claim(self, wa_id: str, admin: str, at: int) -> None:
