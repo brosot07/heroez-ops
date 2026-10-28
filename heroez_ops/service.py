@@ -7,6 +7,7 @@ import logging
 import time
 from pathlib import Path
 
+from .ai import Classifier, ClaudeClassifier, build_transcript
 from .alerts.base import AlertChannel
 from .alerts.telegram import ShadowAlertChannel, TelegramAlertChannel
 from .bizhours import BusinessClock
@@ -24,12 +25,17 @@ log = logging.getLogger(__name__)
 
 class Service:
     def __init__(self, cfg: Config, store: Store, alert_channel: AlertChannel | None = None,
-                 reply_channel: AlertChannel | None = None, data_dir: Path = Path("data")):
+                 reply_channel: AlertChannel | None = None, data_dir: Path = Path("data"),
+                 classifier: Classifier | None = None):
         self.cfg, self.store = cfg, store
         self.data_dir = Path(data_dir) if data_dir else None
         self.clock = BusinessClock(cfg)
         self.source = MetaCoexistenceSource(cfg.meta_app_secret, cfg.business_number)
         self.engine = Engine(cfg, store)
+        self.classifier = classifier
+        if self.classifier is None and cfg.ai_enabled and cfg.anthropic_api_key:
+            self.classifier = ClaudeClassifier(cfg.anthropic_api_key, store, model=cfg.ai_model)
+        self.engine.ai_enabled = self.classifier is not None
         telegram = TelegramAlertChannel(cfg.telegram_bot_token) if cfg.telegram_bot_token else None
         self.telegram = telegram
         # Shadow mode: alerts are only logged. Command replies still go to Telegram so
@@ -86,10 +92,30 @@ class Service:
     def tick(self, now: dt.datetime | None = None) -> None:
         now = now or dt.datetime.now(dt.timezone.utc)
         self.process_inbox()
+        self.classify_pending(now)
         self.notifier.tick(now)
         self.digest.maybe_send(now, self.alert_channel)
         self.check_quiet_inbox(now)
         self.daily_maintenance(now)
+
+    def classify_pending(self, now: dt.datetime, limit: int = 30) -> int:
+        """Run the AI check on chats whose latest client message hasn't been checked yet."""
+        if not self.classifier:
+            return 0
+        rows = self.store.q("SELECT c.wa_id, c.ai_msg_id, ct.kind FROM conversations c JOIN contacts ct USING(wa_id) "
+                            "WHERE c.ai_pending=1 ORDER BY c.last_inbound_at LIMIT ?", (limit,))
+        for r in rows:
+            msgs = self.store.q("SELECT direction, ts, type, text FROM messages WHERE wa_id=? ORDER BY ts DESC LIMIT ?",
+                                (r["wa_id"], self.cfg.ai_context_messages))
+            transcript = build_transcript(list(reversed(msgs)), self.cfg.tz)
+            kind = {"talent": "talent Heroez", "existing_client": "klien lama", "new": "kontak baru"}.get(r["kind"], r["kind"])
+            verdict = self.classifier.classify(transcript, kind)
+            if verdict is None:
+                self.engine.ai_failed(r["wa_id"])
+                continue
+            self.engine.apply_verdict(r["wa_id"], r["ai_msg_id"], verdict, self.cfg.ai_min_confidence_to_close,
+                                      int(now.timestamp()))
+        return len(rows)
 
     def daily_maintenance(self, now: dt.datetime) -> None:
         """Once a day after 03:00 WIB: erase old message texts, prune raw payloads, back up the DB."""

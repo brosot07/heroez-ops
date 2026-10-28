@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from . import secrets as secretstore
+from .ai import month_cost
 from .alerts.telegram import TelegramAlertChannel
 from .config import ConfigError, load_config
 from .db import Store
@@ -95,18 +96,26 @@ class SetupUI:
 
         bh = raw.setdefault("business_hours", {})
         bh["days"] = [d for d in range(7) if form.get(f"day{d}")]
-        bh["start"], bh["end"] = g("start", "09:00"), g("end", "21:00")
+        bh["start"], bh["end"] = g("start", "09:30"), g("end", "21:00")
         bh.setdefault("holidays_file", "config/holidays.yaml")
+
+        raw.setdefault("ai", {})["enabled"] = bool(form.get("ai_enabled"))
 
         esc = raw.setdefault("escalation", {})
         for k, field in (("nudge", "nudge_assignee_after_business_min"), ("group", "alert_group_after_business_min"),
-                         ("urgent", "urgent_after_real_hours")):
+                         ("urgent", "urgent_after_real_hours"), ("repeat", "repeat_every_business_min")):
             if g(k).isdigit():
                 esc[field] = int(g(k))
+        wk = raw.setdefault("weekend", {})
+        wk["days"] = [d for d in range(7) if form.get(f"wkd{d}")]
+        if g("weekend_hours").isdigit():
+            wk["min_minutes_between_messages_per_recipient"] = max(1, int(g("weekend_hours"))) * 60
+        if g("max_per").isdigit():
+            raw.setdefault("alerts", {})["min_minutes_between_messages_per_recipient"] = max(1, int(g("max_per")))
 
         new_secrets = dict(old_secrets)
         for field, key in (("telegram_bot_token", "TELEGRAM_BOT_TOKEN"), ("meta_app_secret", "META_APP_SECRET"),
-                           ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN")):
+                           ("tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"), ("anthropic_api_key", "ANTHROPIC_API_KEY")):
             if g(field):                      # blank = keep the existing value
                 new_secrets[key] = g(field)
             if form.get(f"clear_{field}"):
@@ -167,11 +176,26 @@ class SetupUI:
             for j in range(1, MAX_SPV + 1))
         days = "".join(f'<label style="display:inline;font-weight:400;margin-right:10px"><input type="checkbox" name="day{d}" '
                        f'{"checked" if d in (bh.get("days") or []) else ""}> {DAYS[d]}</label>' for d in range(7))
+        wk_days = (raw.get("weekend") or {}).get("days") or []
+        weekend_days = "".join(f'<label style="display:inline;font-weight:400;margin-right:10px"><input type="checkbox" name="wkd{d}" '
+                               f'{"checked" if d in wk_days else ""}> {DAYS[d]}</label>' for d in range(7))
         newcomer_html = "".join(f"<li>{_e(u['name'])} {('@' + _e(u['username'])) if u.get('username') else ''}: <code>{_e(u['id'])}</code></li>"
                                 for u in newcomers) or "<li class='muted'>Belum ada. Minta orangnya kirim /start ke bot.</li>"
         msg = f'<div class="msg {"ok" if ok else "bad"}">{_e(message)}</div>' if message else ""
         has = lambda k: "✅ tersimpan" if sec.get(k) else "❌ belum diisi"  # noqa: E731
         webhook_url = f"https://{_e(host)}/webhook/meta" if host else "(isi alamat publik dulu)"
+        ai_cfg = raw.get("ai") or {}
+        calls, usd = month_cost(self.store)
+        if not sec.get("ANTHROPIC_API_KEY"):
+            ai_status = "mati (API key belum diisi), hanya aturan kata"
+        elif not ai_cfg.get("enabled", True):
+            ai_status = "dimatikan"
+        else:
+            ai_status = f"aktif · bulan ini {calls} pesan dicek · ±US${usd:.2f}"
+        if self.store.get_kv("ai_last_error") and sec.get("ANTHROPIC_API_KEY"):
+            err = json.loads(self.store.get_kv("ai_last_error"))
+            if err.get("kind") == "auth" and time.time() - err.get("at", 0) < 86400:
+                ai_status += " · ⚠️ API key ditolak, cek lagi"
 
         return f"""<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heroez Ops Settings</title><style>{CSS}</style></head><body><main>
@@ -180,7 +204,8 @@ class SetupUI:
 <p>Mode: <b>{"LIVE (notifikasi dikirim)" if raw.get("mode") == "live" else "SHADOW (hanya dicatat, belum dikirim)"}</b><br>
 Pesan WhatsApp terakhir masuk: <b>{ago(st.get("last_webhook_at", 0))}</b><br>
 Sistem terakhir aktif: <b>{ago(st.get("last_tick_at", 0))}</b><br>
-Tunnel (alamat publik): <b>{_e(st.get("tunnel", "tidak dipakai"))}</b></p>
+Tunnel (alamat publik): <b>{_e(st.get("tunnel", "tidak dipakai"))}</b><br>
+AI (Claude): <b>{ai_status}</b></p>
 <p>Isi ini di Meta (Webhook):<br>Callback URL: <code>{webhook_url}</code><br>Verify token: <code>{_e(sec.get("META_VERIFY_TOKEN", "(muncul setelah simpan pertama)"))}</code></p></div>
 
 <form method="post" action="/save"><input type="hidden" name="csrf" value="{self.csrf}">
@@ -200,15 +225,26 @@ Tunnel (alamat publik): <b>{_e(st.get("tunnel", "tidak dipakai"))}</b></p>
 <table><tr><th>Nama</th><th>ID Telegram</th>{spv_head}</tr>{admin_rows}</table></div>
 
 <div class="card"><h2>5. Jam kerja & pengingat</h2>{days}
-<div class="row"><div><label>Mulai</label><input type="time" name="start" value="{_e(bh.get("start", "09:00"))}"></div>
+<div class="row"><div><label>Mulai</label><input type="time" name="start" value="{_e(bh.get("start", "09:30"))}"></div>
 <div><label>Selesai</label><input type="time" name="end" value="{_e(bh.get("end", "21:00"))}"></div></div>
 <div class="row"><div><label>Ingatkan admin setelah <small>(menit jam kerja)</small></label><input type="number" name="nudge" value="{_e(esc.get("nudge_assignee_after_business_min", 30))}"></div>
 <div><label>Libatkan supervisor setelah <small>(menit jam kerja)</small></label><input type="number" name="group" value="{_e(esc.get("alert_group_after_business_min", 120))}"></div></div>
+<div class="row"><div><label>Ulangi pengingat tiap <small>(menit jam kerja, 0 = tidak)</small></label><input type="number" name="repeat" value="{_e(esc.get("repeat_every_business_min", 60))}"></div>
+<div><label>Maksimal 1 notifikasi per orang tiap <small>(menit)</small></label><input type="number" name="max_per" value="{_e((raw.get("alerts") or {}).get("min_minutes_between_messages_per_recipient", 60))}"></div></div>
+<label>Akhir pekan <small>(hari dengan notifikasi lebih jarang)</small></label>{weekend_days}
+<label>Akhir pekan: maksimal 1 notifikasi per orang tiap <small>(jam)</small></label><input type="number" name="weekend_hours" value="{_e(int((raw.get("weekend") or {}).get("min_minutes_between_messages_per_recipient", 360)) // 60)}">
 <label>Peringatan urgent setelah <small>(jam, sejak pesan klien)</small></label><input type="number" name="urgent" value="{_e(esc.get("urgent_after_real_hours", 18))}">
 <div class="row"><div><label>ID grup admin <small>(opsional)</small></label><input type="text" name="admin_group_id" value="{_e(tg.get("admin_group_id") or "")}"></div>
 <div><label>ID grup manajemen <small>(opsional)</small></label><input type="text" name="management_group_id" value="{_e(tg.get("management_group_id") or "")}"></div></div></div>
 
-<div class="card"><h2>6. WhatsApp & koneksi</h2>
+<div class="card"><h2>6. AI (Claude)</h2>
+<p class="muted">AI membaca pesan terakhir klien dan menentukan: pertanyaan, permintaan, atau penutup.
+Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat. Biaya kira-kira US$1–5 per bulan.</p>
+<label style="font-weight:400"><input type="checkbox" name="ai_enabled" {"checked" if (raw.get("ai") or {}).get("enabled", True) else ""}> Pakai AI untuk mengecek pesan</label>
+<label>Claude API key <small>(console.anthropic.com → API keys) · {has("ANTHROPIC_API_KEY")}</small></label>
+<input type="password" name="anthropic_api_key" autocomplete="off"></div>
+
+<div class="card"><h2>7. WhatsApp & koneksi</h2>
 <label>Nomor WhatsApp Heroez <small>(dengan kode negara, mis. 62812…)</small></label><input type="text" name="business_number" value="{_e((raw.get("whatsapp") or {}).get("business_number", ""))}">
 <label>Meta App Secret <small>· {has("META_APP_SECRET")}</small></label><input type="password" name="meta_app_secret" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">

@@ -31,6 +31,14 @@ Meta must be able to reach this computer. The tunnel does that without opening p
 4. Add a *Public hostname*: e.g. `ops.heroez.id` → Service: `HTTP` → URL: `localhost:8787`.
 5. In our settings page, section 6: paste the token, type the hostname → Simpan. Status should show *Tunnel: berjalan*.
 
+## 3b. AI check (Claude, optional but recommended)
+1. Create an account at <https://console.anthropic.com>, add a payment method or prepaid credit, and create an **API key**.
+2. Paste it in the settings page, section 6 (AI), and keep "Pakai AI" ticked → Simpan.
+3. Status then shows *AI: aktif* with the number of messages checked this month and the estimated cost.
+Expected cost: about US$1–5 per month. Without a key, the word rules alone decide.
+Privacy: the last ~8 messages of a chat (long numbers masked) are sent to Anthropic's API to be classified.
+Mention this in the data-flow note for clients and talents.
+
 ## 4. Meta (WhatsApp)
 Follow `SETUP_RUNBOOK.md` for the Meta app and coexistence onboarding. In the Meta app's WhatsApp → Configuration:
 - **Callback URL** and **Verify token**: copy them from the top of our settings page.

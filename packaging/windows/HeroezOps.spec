@@ -9,8 +9,9 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 a = Analysis(
     [os.path.join(SPECPATH, "entry.py")],
     pathex=[ROOT],
-    datas=collect_data_files("tzdata") + [(os.path.join(ROOT, "heroez_ops", "defaults"), "heroez_ops/defaults")],
-    hiddenimports=collect_submodules("uvicorn") + ["tzdata"],
+    datas=collect_data_files("tzdata") + [(os.path.join(ROOT, "heroez_ops", "defaults"), "heroez_ops/defaults"),
+                                        (os.path.join(ROOT, "heroez_ops", "prompts"), "heroez_ops/prompts")],
+    hiddenimports=collect_submodules("uvicorn") + collect_submodules("anthropic") + ["tzdata"],
     excludes=["tkinter", "pytest"],
 )
 pyz = PYZ(a.pure)

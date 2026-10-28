@@ -6,9 +6,9 @@ mode: shadow            # shadow = compute + log alerts, send nothing. live = se
 timezone: Asia/Jakarta
 
 business_hours:
-  # 0 = Monday ... 6 = Sunday
-  days: [0, 1, 2, 3, 4, 5]
-  start: "09:00"
+  # 0 = Monday ... 6 = Sunday. Days listed here run the reminder timers.
+  days: [0, 1, 2, 3, 4, 5, 6]
+  start: "09:30"
   end: "21:00"
   holidays_file: config/holidays.yaml
 
@@ -50,16 +50,30 @@ escalation:
   urgent_after_real_hours: 18      # since client's last message, real time
   overdue_after_real_hours: 24     # since client's last message, real time
   snooze_minutes: 60
+  repeat_every_business_min: 60    # keep reminding the assignee every hour until replied (0 = off)
 
 alerts:
-  min_minutes_between_messages_per_recipient: 10
+  min_minutes_between_messages_per_recipient: 60   # at most 1 Telegram message per person per hour
   max_items_per_message: 5
 
+weekend:
+  days: [5, 6]                       # Saturday, Sunday
+  min_minutes_between_messages_per_recipient: 360   # at most 1 notification per person per 6 hours
+
 digest:
-  admin_morning_time: "08:30"       # each admin: their waiting chats
-  management_time: "09:00"          # supervisors + management group: yesterday's numbers
+  admin_morning_time: "09:30"       # each admin: their waiting chats
+  management_time: "09:30"          # supervisors + management group: yesterday's numbers
 
 talent_roster_file: data/talent_roster.csv   # columns: name,phone,handler (admin key)
+
+ai:
+  # Claude checks each client message: question / inquiry / closure? Needs a Claude API key
+  # (settings page). Without a key the text rules alone decide.
+  enabled: true
+  model: claude-haiku-5-5
+  min_confidence_to_close: 0.75   # AI must be this sure before it closes a chat (no alert)
+  context_messages: 8             # how many recent messages the AI reads
+  wait_minutes: 10                # alerts wait this long for the AI check; then rules decide
 
 retention:
   message_text_days: 90   # message texts are erased after this many days (UU PDP); states and metrics stay

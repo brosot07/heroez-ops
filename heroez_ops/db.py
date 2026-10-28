@@ -108,6 +108,16 @@ CREATE TABLE IF NOT EXISTS inbox (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS inbox_pending ON inbox(processed_at);
+CREATE TABLE IF NOT EXISTS ai_usage (
+    day TEXT NOT NULL,
+    model TEXT NOT NULL,
+    calls INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, model)
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -125,6 +135,25 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
         self.lock = threading.RLock()
+        self._migrate()
+
+    # Columns added after the first release. Old databases get them on start-up.
+    ADDED_COLUMNS = {
+        "conversations": [
+            ("ai_pending", "INTEGER NOT NULL DEFAULT 0"),   # last inbound message not yet checked by AI
+            ("ai_msg_id", "TEXT"),                          # message the AI verdict refers to
+            ("ai_kind", "TEXT"),
+            ("ai_summary", "TEXT"),
+            ("ai_confidence", "REAL"),
+        ],
+    }
+
+    def _migrate(self) -> None:
+        for table, cols in self.ADDED_COLUMNS.items():
+            have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, decl in cols:
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     # -- generic helpers -------------------------------------------------
     def q(self, sql: str, params: tuple | dict = ()) -> list[sqlite3.Row]:

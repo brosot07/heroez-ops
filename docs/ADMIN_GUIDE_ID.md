@@ -19,13 +19,19 @@ Di PC, buka WhatsApp lewat **web.whatsapp.com**, bukan aplikasi Windows.
 | Tanda | Artinya |
 |---|---|
 | 🟠 **Belum dibalas** | Chat yang dipegang kamu belum dibalas selama 30 menit jam kerja |
+| 🟠 **Masih belum dibalas** | Pengingat ulang tiap jam untuk chat yang sama |
 | 🟠 **Belum dibalas >2 jam kerja** | Dikirim juga ke grup admin dan supervisor |
 | 🔴 **URGENT: hampir 24 jam** | Klien sudah menunggu 18 jam. Segera balas. |
 | 🔴 **Lewat 24 jam** | Sudah lebih dari sehari. Balas secepatnya. |
-| ☀️ **Selamat pagi** (08:30) | Daftar chat yang masih menunggu, dari yang paling lama |
+| ☀️ **Selamat pagi** (09:30) | Daftar chat yang masih menunggu, dari yang paling lama |
 
-Jam kerja: Senin–Sabtu 09:00–21:00 WIB, kecuali tanggal merah. Pesan malam hari baru dihitung besok pagi.
-Paling banyak 1 notifikasi per 10 menit. Kalau ada beberapa chat, dikumpulkan jadi satu daftar.
+Jam kerja: setiap hari 09:30–21:00 WIB, kecuali tanggal merah. Pesan malam hari baru dihitung besok pagi.
+Paling banyak **1 notifikasi per jam** (Sabtu–Minggu: **1 per 6 jam**). Semua chat yang menunggu dikumpulkan jadi satu daftar.
+Chat yang belum dibalas akan muncul lagi tiap jam sampai dibalas.
+
+**AI:** sebelum notifikasi dikirim, AI membaca pesan terakhir klien dan menentukan apakah itu pertanyaan,
+permintaan, atau penutup ("baik kak, kami review dulu"). Kalau penutup, tidak ada notifikasi.
+Baris 🤖 di notifikasi adalah ringkasan dari AI. AI tidak pernah membalas klien.
 
 Setiap notifikasi berisi nama, nomor, sudah berapa lama menunggu, potongan pesan terakhir, dan
 link **Buka chat** (langsung membuka chat di WhatsApp).

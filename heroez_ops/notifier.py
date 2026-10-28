@@ -21,10 +21,11 @@ from .states import AWAITING_US, POSSIBLY_REPLIED
 
 log = logging.getLogger(__name__)
 
-STEP_RANK = {"overdue": 5, "urgent": 4, "management": 3, "group": 2, "nudge": 1}
-STEP_ICON = {"overdue": "🔴", "urgent": "🔴", "management": "🔴", "group": "🟠", "nudge": "🟠"}
+STEP_RANK = {"overdue": 5, "urgent": 4, "management": 3, "group": 2, "reminder": 1, "nudge": 1}
+STEP_ICON = {"overdue": "🔴", "urgent": "🔴", "management": "🔴", "group": "🟠", "reminder": "🟠", "nudge": "🟠"}
 STEP_LABEL = {
     "nudge": "Belum dibalas",
+    "reminder": "Masih belum dibalas",
     "group": "Belum dibalas >2 jam kerja",
     "management": "Lead P1 belum dibalas",
     "urgent": "URGENT: hampir 24 jam belum dibalas",
@@ -82,20 +83,30 @@ class Notifier:
             missing = [r for r in d.recipients if not self.chat_id(r) and not r.startswith("group:")]
             if missing:
                 log.warning("no Telegram ID set for %s; they miss alert %s/%s", missing, d.wa_id, d.step)
-            self.escalator.mark_fired(d.wa_id, d.step)
+            self.escalator.mark_fired(d.wa_id, d.key or d.step)
             self.store.audit("system", f"escalate:{d.step}", d.wa_id, {"recipients": list(d.recipients)}, now_ts)
         self.flush(now)
         self.morning_list(now)
 
     def flush(self, now: dt.datetime) -> None:
         now_ts = int(now.timestamp())
-        gap = self.cfg.min_minutes_between_messages * 60
+        weekend = now.astimezone(self.cfg.tz).weekday() in self.cfg.weekend_days
+        gap = (self.cfg.weekend_min_minutes_between_messages if weekend
+               else self.cfg.min_minutes_between_messages) * 60
         for row in self.store.q("SELECT DISTINCT chat_id FROM outbox WHERE sent_at IS NULL"):
             cid = row["chat_id"]
             last = self.store.one("SELECT MAX(sent_at) AS t FROM sent_batches WHERE chat_id=?", (cid,))
             if last and last["t"] and now_ts - last["t"] < gap:
                 continue
             pending = self.store.q("SELECT * FROM outbox WHERE chat_id=? AND sent_at IS NULL", (cid,))
+            if not self.clock.is_open(now):
+                # After hours only urgent items go out; routine ones wait for the 08:30 morning list.
+                routine = [p["id"] for p in pending if p["step"] not in ("urgent", "overdue")]
+                if routine:
+                    self.store.x(f"UPDATE outbox SET sent_at=? WHERE id IN ({','.join('?' * len(routine))})", (now_ts, *routine))
+                pending = [p for p in pending if p["step"] in ("urgent", "overdue")]
+                if not pending:
+                    continue
             # One line per chat, keeping the most severe step; skip chats already answered.
             best: dict[str, str] = {}
             for p in pending:
@@ -146,7 +157,8 @@ class Notifier:
         head = f"{STEP_ICON.get(step, '🟠')} <b>{name}</b> ({display(wa_id)}) · {kind}{prio}"
         if step:
             head += f"\n{STEP_LABEL[step]}"
-        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), snippet,
+        ai_line = f"🤖 {html.escape(c['ai_summary'])}" if c and c["ai_summary"] and not c["ai_pending"] else ""
+        parts = [head, f"{waited} · PIC: {html.escape(who)}".strip(" ·"), ai_line, snippet,
                  f'<a href="https://wa.me/{wa_id}">Buka chat</a>']
         return "\n".join(p for p in parts if p)
 

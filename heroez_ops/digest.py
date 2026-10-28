@@ -5,6 +5,7 @@ import datetime as dt
 import html
 import statistics
 
+from .ai import month_cost
 from .bizhours import BusinessClock
 from .config import Config
 from .db import Store
@@ -76,6 +77,9 @@ class Digest:
             for r in quiet:
                 lines.append(f"• {html.escape(r['name'] or display(r['wa_id']))} "
                              f"<a href=\"https://wa.me/{r['wa_id']}\">Buka</a>")
+        calls, usd = month_cost(self.store, end.astimezone(self.cfg.tz).date())
+        if calls:
+            lines += ["", f"🤖 AI bulan ini: {calls} pesan dicek · ±US${usd:.2f}"]
         if feedback:
             lines += ["", f"Koreksi admin: ✅ {feedback.get('already_replied', 0)} · 🚫 {feedback.get('not_ours', 0)}"]
         return "\n".join(lines)

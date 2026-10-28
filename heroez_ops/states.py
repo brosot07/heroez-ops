@@ -14,7 +14,7 @@ from .config import Config
 from .db import Store
 from .phone import normalize
 from .sources.base import ContactEvent, Event, MessageEvent
-from .textrules import classify_inbound
+from .textrules import classify_inbound, is_emoji_only
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ POSSIBLY_REPLIED = "POSSIBLY_REPLIED"
 
 # Escalation step names (also used in fired_steps)
 ALL_STEPS = ("nudge", "group", "management", "urgent", "overdue")
+NO_REPEAT = "no_repeat"   # in fired_steps: backfilled chat, no hourly repeats
 
 
 @dataclass
@@ -41,6 +42,7 @@ class Engine:
         self.cfg = cfg
         self.store = store
         self.roster: dict[str, dict] = {}
+        self.ai_enabled = False   # set by Service when a Claude API key is configured
         self.load_roster()
 
     # -- roster ---------------------------------------------------------
@@ -157,6 +159,7 @@ class Engine:
         return self._set_state(
             ev.wa_id, AWAITING_THEM, f"admin replied ({ev.source})", ev.ts, ev.msg_id,
             waiting_since=None, last_outbound_at=last_out, fired_steps="[]", snoozed_until=None,
+            ai_pending=0, ai_msg_id=None,
         )
 
     def _inbound(self, ev: MessageEvent) -> Change | None:
@@ -170,20 +173,25 @@ class Engine:
         kind = classify_inbound(ev.type, ev.text)
         prev = conv["state"] if conv else None
         history = ev.source == "history"
+        # The text rules give an immediate state; the AI re-checks every message except
+        # stickers/reactions/emoji and may override it before any alert is due.
+        ai = {}
+        if self.ai_enabled and not (kind == "ack" and (ev.type in ("sticker", "reaction") or is_emoji_only(ev.text))):
+            ai = {"ai_pending": 1, "ai_msg_id": ev.msg_id}
 
         if kind == "ack":
             if prev == AWAITING_US:
                 return self._set_state(ev.wa_id, POSSIBLY_REPLIED, "client acknowledged while we looked unanswered (reply probably sent from a device without echoes)",
-                                       ev.ts, ev.msg_id, last_inbound_at=last_in)
+                                       ev.ts, ev.msg_id, last_inbound_at=last_in, **ai)
             if prev == POSSIBLY_REPLIED:
-                return self._set_state(ev.wa_id, POSSIBLY_REPLIED, "ack", ev.ts, ev.msg_id, last_inbound_at=last_in)
-            return self._set_state(ev.wa_id, CLOSED, "last message needs no reply", ev.ts, ev.msg_id, last_inbound_at=last_in)
+                return self._set_state(ev.wa_id, POSSIBLY_REPLIED, "ack", ev.ts, ev.msg_id, last_inbound_at=last_in, **ai)
+            return self._set_state(ev.wa_id, CLOSED, "last message needs no reply", ev.ts, ev.msg_id, last_inbound_at=last_in, **ai)
 
         if kind == "thanks":
             if prev in (AWAITING_THEM, CLOSED):
-                return self._set_state(ev.wa_id, CLOSED, "client said thanks", ev.ts, ev.msg_id, last_inbound_at=last_in)
+                return self._set_state(ev.wa_id, CLOSED, "client said thanks", ev.ts, ev.msg_id, last_inbound_at=last_in, **ai)
             return self._set_state(ev.wa_id, POSSIBLY_REPLIED, "client thanked us for something we never saw sent",
-                                   ev.ts, ev.msg_id, last_inbound_at=last_in)
+                                   ev.ts, ev.msg_id, last_inbound_at=last_in, **ai)
 
         # needs_reply
         waiting_since = conv["waiting_since"] if conv and prev == AWAITING_US and conv["waiting_since"] else ev.ts
@@ -191,11 +199,37 @@ class Engine:
         if history:
             # Backfilled chats show up in /semua and the morning list, but must not
             # trigger a flood of escalation alerts on onboarding day.
-            fired = json.dumps(list(ALL_STEPS))
+            fired = json.dumps(list(ALL_STEPS) + [NO_REPEAT])
         change = self._set_state(ev.wa_id, AWAITING_US, "client message needs a reply", ev.ts, ev.msg_id,
-                                 waiting_since=waiting_since, last_inbound_at=last_in, fired_steps=fired)
+                                 waiting_since=waiting_since, last_inbound_at=last_in, fired_steps=fired, **ai)
         self._assign(ev.wa_id, ev.ts)
         return change
+
+    # -- AI verdicts ----------------------------------------------------
+    def apply_verdict(self, wa_id: str, msg_id: str, v, min_confidence: float, at: int) -> Change | None:
+        """Apply an AI verdict about message msg_id, unless something newer happened since."""
+        conv = self.conversation(wa_id)
+        if not conv or conv["ai_msg_id"] != msg_id:
+            return None  # a newer message or a reply arrived; that one gets its own check
+        msg = self.store.one("SELECT ts, source FROM messages WHERE id=?", (msg_id,))
+        self.store.x("UPDATE conversations SET ai_pending=0, ai_kind=?, ai_summary=?, ai_confidence=?, priority=? WHERE wa_id=?",
+                     (v.kind, v.summary, v.confidence, v.priority if v.needs_reply else conv["priority"], wa_id))
+        self.store.audit("ai", "verdict", wa_id, {"msg": msg_id, "kind": v.kind, "needs_reply": v.needs_reply,
+                                                   "confidence": v.confidence, "priority": v.priority}, at)
+        reason = f"AI: {v.kind} ({v.confidence:.2f}) {v.summary}"
+        if v.needs_reply and conv["state"] != AWAITING_US:
+            fired = json.dumps(list(ALL_STEPS) + [NO_REPEAT]) if msg and msg["source"] == "history" else "[]"
+            change = self._set_state(wa_id, AWAITING_US, reason, at, msg_id,
+                                     waiting_since=msg["ts"] if msg else at, fired_steps=fired)
+            self._assign(wa_id, at)
+            return change
+        if not v.needs_reply and v.confidence >= min_confidence and conv["state"] in (AWAITING_US, POSSIBLY_REPLIED):
+            return self._set_state(wa_id, CLOSED, reason, at, msg_id, waiting_since=None, fired_steps="[]")
+        return None
+
+    def ai_failed(self, wa_id: str) -> None:
+        """Give up on the AI for this message; the text-rule state stands."""
+        self.store.x("UPDATE conversations SET ai_pending=0 WHERE wa_id=?", (wa_id,))
 
     # -- admin actions (Telegram buttons) ------------------------------
     def claim(self, wa_id: str, admin: str, at: int) -> None:
@@ -210,7 +244,8 @@ class Engine:
         self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)",
                      (wa_id, "already_replied", admin, conv["state"], at))
         self._set_state(wa_id, AWAITING_THEM, f"marked replied by {admin}", at,
-                        waiting_since=None, fired_steps="[]", snoozed_until=None, last_outbound_at=at)
+                        waiting_since=None, fired_steps="[]", snoozed_until=None, last_outbound_at=at,
+                        ai_pending=0, ai_msg_id=None)
         self.store.audit(admin, "mark_replied", wa_id, None, at)
 
     def mark_not_ours(self, wa_id: str, admin: str, at: int) -> None:
@@ -220,7 +255,8 @@ class Engine:
         self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)",
                      (wa_id, "not_ours", admin, conv["state"], at))
         self._set_state(wa_id, CLOSED, f"no reply needed (per {admin})", at,
-                        waiting_since=None, fired_steps="[]", snoozed_until=None)
+                        waiting_since=None, fired_steps="[]", snoozed_until=None,
+                        ai_pending=0, ai_msg_id=None)
         self.store.audit(admin, "mark_not_ours", wa_id, None, at)
 
     def snooze(self, wa_id: str, admin: str, at: int) -> int:

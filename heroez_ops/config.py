@@ -37,6 +37,7 @@ class Escalation:
     urgent_after_real_hours: int = 18
     overdue_after_real_hours: int = 24
     snooze_minutes: int = 60
+    repeat_every_business_min: int = 60   # 0 = never repeat
 
 
 @dataclass(frozen=True)
@@ -58,11 +59,19 @@ class Config:
     management_user_ids: tuple[int, ...]
     escalation: Escalation
     min_minutes_between_messages: int
+    weekend_days: frozenset[int]
+    weekend_min_minutes_between_messages: int
     max_items_per_message: int
     admin_morning_time: dt.time
     management_digest_time: dt.time
     talent_roster_file: Path | None
     possibly_replied_recheck_hours: int
+    ai_enabled: bool = True
+    ai_model: str = "claude-haiku-5-5"
+    ai_min_confidence_to_close: float = 0.75
+    ai_context_messages: int = 8
+    ai_wait_minutes: int = 10
+    anthropic_api_key: str = ""
     message_text_days: int = 90
     raw_webhook_days: int = 7
     backup_keep: int = 14
@@ -126,7 +135,7 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
     days = frozenset(int(d) for d in bh.get("days", [0, 1, 2, 3, 4, 5]))
     if not days or not days <= set(range(7)):
         raise ConfigError("business_hours.days must list numbers 0 (Monday) to 6 (Sunday)")
-    start = _time(bh.get("start", "09:00"), "business_hours.start")
+    start = _time(bh.get("start", "09:30"), "business_hours.start")
     end = _time(bh.get("end", "21:00"), "business_hours.end")
     if end <= start:
         raise ConfigError("business_hours.end must be later than business_hours.start")
@@ -190,12 +199,21 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         management_group_id=int(tg.get("management_group_id") or 0),
         management_user_ids=tuple(int(x) for x in tg.get("management_user_ids") or []),
         escalation=esc,
-        min_minutes_between_messages=int(al.get("min_minutes_between_messages_per_recipient", 10)),
+        min_minutes_between_messages=int(al.get("min_minutes_between_messages_per_recipient", 60)),
+        weekend_days=frozenset(int(d) for d in (raw.get("weekend") or {}).get("days", [])),
+        weekend_min_minutes_between_messages=int((raw.get("weekend") or {}).get(
+            "min_minutes_between_messages_per_recipient", 360)),
         max_items_per_message=int(al.get("max_items_per_message", 5)),
-        admin_morning_time=_time((raw.get("digest") or {}).get("admin_morning_time", "08:30"), "digest.admin_morning_time"),
-        management_digest_time=_time((raw.get("digest") or {}).get("management_time", "09:00"), "digest.management_time"),
+        admin_morning_time=_time((raw.get("digest") or {}).get("admin_morning_time", "09:30"), "digest.admin_morning_time"),
+        management_digest_time=_time((raw.get("digest") or {}).get("management_time", "09:30"), "digest.management_time"),
         talent_roster_file=(base_dir / roster) if roster else None,
         possibly_replied_recheck_hours=int((raw.get("possibly_replied") or {}).get("recheck_hours", 24)),
+        ai_enabled=bool((raw.get("ai") or {}).get("enabled", True)),
+        ai_model=str((raw.get("ai") or {}).get("model", "claude-haiku-5-5")),
+        ai_min_confidence_to_close=float((raw.get("ai") or {}).get("min_confidence_to_close", 0.75)),
+        ai_context_messages=int((raw.get("ai") or {}).get("context_messages", 8)),
+        ai_wait_minutes=int((raw.get("ai") or {}).get("wait_minutes", 10)),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         message_text_days=int((raw.get("retention") or {}).get("message_text_days", 90)),
         raw_webhook_days=int((raw.get("retention") or {}).get("raw_webhook_days", 7)),
         backup_keep=int((raw.get("retention") or {}).get("backup_keep", 14)),

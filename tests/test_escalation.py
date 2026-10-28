@@ -105,17 +105,31 @@ def test_p1_lead_alerts_management_at_4h(service, channel):
     assert any(m["chat_id"] == -200 for m in sends(channel))
 
 
-def test_batching_one_message_per_10_minutes(service, channel):
+def test_at_most_one_message_per_hour_per_person(service, channel):
     t0 = wib(2026, 11, 2, 10, 0)
-    service.engine.claim  # noqa: B018
     for i, wa in enumerate(["628101", "628102", "628103"]):
         service.process_payload(fixtures.inbound(wa, "Halo kak", ts(t0 + dt.timedelta(minutes=i * 3))))
         service.engine.claim(wa, "rina", ts(t0))
-    run(service, t0, t0 + dt.timedelta(minutes=45))
+    run(service, t0, t0 + dt.timedelta(minutes=95))
     to_rina = [m for m in sends(channel) if m["chat_id"] == tg(service, "rina")]
-    assert len(to_rina) == 2                           # 10:30 (first) and 10:40 (the other two)
-    assert "2 chat perlu dibalas" in to_rina[1]["text"]
-    assert len(to_rina[1]["buttons"]) == 2             # one button row per chat
+    assert len(to_rina) == 2                           # 10:30 (first chat) and 11:30 (everything since)
+    assert "chat perlu dibalas" in to_rina[1]["text"]
+    assert len(to_rina[1]["buttons"]) >= 2             # one button row per chat
+
+
+def test_unreplied_chat_is_repeated_hourly(service, channel):
+    t0 = wib(2026, 11, 2, 10, 0)
+    service.process_payload(fixtures.inbound("628111", "Kak, brief kapan dikirim?", ts(t0)))
+    service.engine.claim("628111", "rina", ts(t0))
+    service.notifier.escalator.mark_fired("628111", "group")   # look only at the assignee's reminders
+    run(service, t0, t0 + dt.timedelta(hours=4), step_min=5)
+    texts = [m["text"] for m in sends(channel) if m["chat_id"] == tg(service, "rina")]
+    assert len(texts) == 3                              # 11:30, 12:30, 13:30 (10:30 nudge pre-marked above)
+    assert "Masih belum dibalas" in texts[-1]
+    # A reply stops the repeats.
+    service.process_payload(fixtures.echo("628111", "Sore ini kak", ts(t0 + dt.timedelta(hours=4))))
+    run(service, t0 + dt.timedelta(hours=4), t0 + dt.timedelta(hours=7), step_min=5)
+    assert len([m for m in sends(channel) if m["chat_id"] == tg(service, "rina")]) == 3
 
 
 def test_alerts_redact_long_numbers(service, channel):
@@ -133,3 +147,19 @@ def test_history_backfill_does_not_flood(service, channel):
     run(service, t0, t0 + dt.timedelta(hours=1), step_min=5)
     assert sends(channel) == []
     assert "10 chat" in service.notifier.queue_text(None, t0)
+
+
+def test_weekend_six_hours_between_messages(cfg, channel, tmp_path):
+    import dataclasses
+
+    from heroez_ops.db import Store
+    from heroez_ops.service import Service
+    wk = dataclasses.replace(cfg, business_days=frozenset(range(7)), weekend_days=frozenset({5, 6}),
+                             weekend_min_minutes_between_messages=360)
+    svc = Service(wk, Store(":memory:"), alert_channel=channel, reply_channel=channel)
+    t0 = wib(2026, 11, 7, 10, 0)    # Saturday
+    svc.process_payload(fixtures.inbound("628111", "Kak, brief kapan?", ts(t0)))
+    svc.engine.claim("628111", "rina", ts(t0))
+    run(svc, t0, wib(2026, 11, 7, 20, 59), step_min=5)
+    to_rina = [m for m in sends(channel) if m["chat_id"] == tg(svc, "rina")]
+    assert len(to_rina) == 2                    # 10:30 and 16:30, not hourly

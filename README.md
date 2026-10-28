@@ -4,7 +4,7 @@ Listen-only service: reads the Heroez WhatsApp Business number (Meta Cloud API, 
 works out which chats are waiting on us, and reminds admins on Telegram. It never messages
 clients. Admins keep replying from the WhatsApp Business app or WhatsApp Web.
 
-**Status:** reminders (rules-only, no AI cost) built and tested against simulated Meta payloads.
+**Status:** reminders with optional AI check, built and tested against simulated Meta payloads.
 Not yet connected to a real number. See `docs/PHASE0_REPORT.md` for open items.
 
 ## What it does
@@ -14,7 +14,8 @@ Not yet connected to a real number. See `docs/PHASE0_REPORT.md` for open items.
 - Assigns an admin: roster handler for talents, the last owner (sticky after "Saya ambil"), else round-robin.
 - Escalation (all in `config/config.yaml`): 30 business min → assignee DM; 2 h → admin group + supervisor;
   P1 4 h → management; 18 h real time → urgent (on-call admin outside hours); 24 h → overdue.
-- Batching: at most one Telegram message per recipient per 10 min. 08:30 morning list.
+- Batching: at most one Telegram message per person per hour (weekends: per 6 hours); unreplied chats repeat hourly. 09:30 morning list.
+- AI check (Claude Haiku, optional): reads the last messages and decides question / inquiry / closure before any alert; adds a one-line summary.
 - Telegram buttons ✋ ✅ ⏰ 🚫, commands `/antrian /semua /cari /bantuan`, whitelist by Telegram user ID.
 - Shadow mode (default): alerts are only written to `data/shadow_alerts.jsonl`.
 - Each admin can have their own supervisor(s), who get that admin's 2 h / 18 h / 24 h escalations.

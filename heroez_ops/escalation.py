@@ -11,14 +11,15 @@ from dataclasses import dataclass
 from .bizhours import BusinessClock
 from .config import Config
 from .db import Store
-from .states import AWAITING_US
+from .states import AWAITING_US, NO_REPEAT
 
 
 @dataclass(frozen=True)
 class Due:
     wa_id: str
-    step: str                 # nudge | group | management | urgent | overdue
+    step: str                 # nudge | reminder | group | management | urgent | overdue
     recipients: tuple[str, ...]  # "admin:<key>" | "spv:<key>" | "group:admin" | "group:management"
+    key: str = ""             # what goes into fired_steps; defaults to step ("reminder:3" for repeats)
 
 
 def _ts(t: dt.datetime) -> int:
@@ -35,6 +36,8 @@ class Escalator:
         rows = self.store.q("SELECT * FROM conversations WHERE state=? AND waiting_since IS NOT NULL", (AWAITING_US,))
         now_ts = _ts(now)
         for c in rows:
+            if c["ai_pending"] and now_ts - (c["last_inbound_at"] or 0) < self.cfg.ai_wait_minutes * 60:
+                continue  # AI check still running; it may close this chat
             fired = set(json.loads(c["fired_steps"] or "[]"))
             waiting = dt.datetime.fromtimestamp(c["waiting_since"], dt.timezone.utc)
             last_in = dt.datetime.fromtimestamp(c["last_inbound_at"] or c["waiting_since"], dt.timezone.utc)
@@ -62,10 +65,15 @@ class Escalator:
                     steps.append(("group", me + own_spv + ("group:admin",)))
                 if bmin >= e.nudge_assignee_after_business_min and assignee:
                     steps.append(("nudge", me))
+                    # Keep reminding the assignee while it stays unanswered (business time only).
+                    if e.repeat_every_business_min and "nudge" in fired and NO_REPEAT not in fired:
+                        n = int((bmin - e.nudge_assignee_after_business_min) // e.repeat_every_business_min)
+                        if n >= 1:
+                            steps.append((f"reminder:{n}", me))
 
             for step, recipients in steps:
                 if step not in fired:
-                    out.append(Due(c["wa_id"], step, recipients))
+                    out.append(Due(c["wa_id"], step.split(":")[0], recipients, key=step))
         return out
 
     def mark_fired(self, wa_id: str, step: str) -> None:

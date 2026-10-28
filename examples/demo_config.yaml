@@ -1,56 +1,67 @@
-# Heroez Ops — business rules. All thresholds live here.
-# Times are WIB (Asia/Jakarta). "business minutes" only count inside business hours.
-
-mode: shadow            # shadow = compute + log alerts, send nothing. live = send to Telegram.
-
+# Demo config for the replay tool (fake Telegram IDs).
+mode: shadow
 timezone: Asia/Jakarta
-
 business_hours:
-  # 0 = Monday ... 6 = Sunday
-  days: [0, 1, 2, 3, 4, 5]
-  start: "09:00"
-  end: "21:00"
+  days:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  start: 09:00
+  end: '21:00'
   holidays_file: config/holidays.yaml
-
 whatsapp:
-  # The Heroez number, digits only with country code (e.g. 6281234567890).
-  business_number: "6280000000000"
+  business_number: '6280000000000'
   window_hours: 24
-
 admins:
-  # telegram_id: numeric Telegram user ID (send /start to @userinfobot to find it).
-  - key: admin1
-    name: Admin 1
-    telegram_id: 1001
-  - key: admin2
-    name: Admin 2
-    telegram_id: 1002
-
-supervisor: admin1          # admin key that also receives 2h alerts
-on_call_rotation: [admin1, admin2]   # rotates daily, used outside business hours
-
+- key: admin1
+  name: Admin 1
+  telegram_id: 1001
+  supervisors:
+  - spv1
+- key: admin2
+  name: Admin 2
+  telegram_id: 1002
+  supervisors:
+  - spv1
+supervisors:
+- key: spv1
+  name: Supervisor 1
+  telegram_id: 2001
+on_call_rotation:
+- admin1
+- admin2
 telegram:
-  admin_group_id: -100         # group chat ID for team alerts
-  management_group_id: -200    # group chat ID for management alerts / digests
-  management_user_ids: []   # extra Telegram user IDs allowed to use the bot
-
+  mode: polling
+  admin_group_id: -100
+  management_group_id: -200
+  management_user_ids: []
 escalation:
   nudge_assignee_after_business_min: 30
   alert_group_after_business_min: 120
   alert_management_p1_after_business_min: 240
-  urgent_after_real_hours: 18      # since client's last message, real time
-  overdue_after_real_hours: 24     # since client's last message, real time
+  urgent_after_real_hours: 18
+  overdue_after_real_hours: 24
   snooze_minutes: 60
-
+  repeat_every_business_min: 60
 alerts:
-  min_minutes_between_messages_per_recipient: 10
+  min_minutes_between_messages_per_recipient: 60
   max_items_per_message: 5
-
 digest:
-  admin_morning_time: "08:30"
-
-talent_roster_file: data/talent_roster.csv   # columns: name,phone,handler (admin key)
-
+  admin_morning_time: 08:30
+  management_time: 09:00
+talent_roster_file: data/talent_roster.csv
+ai:
+  enabled: true
+  model: claude-haiku-5-5
+  min_confidence_to_close: 0.75
+  context_messages: 8
+  wait_minutes: 10
+retention:
+  message_text_days: 90
+  raw_webhook_days: 7
+  backup_keep: 14
 possibly_replied:
-  # How long a POSSIBLY_REPLIED chat stays quiet before the digest lists it again.
   recheck_hours: 24

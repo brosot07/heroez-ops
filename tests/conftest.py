@@ -33,6 +33,9 @@ telegram:
   management_group_id: -200
   management_user_ids: [9001]
 talent_roster_file: data/talent_roster.csv
+digest:
+  admin_morning_time: "08:30"
+  management_time: "09:00"
 """
 
 
