@@ -24,6 +24,7 @@ def _pct(values: list[float], q: float) -> float:
 class Digest:
     def __init__(self, cfg: Config, store: Store, clock: BusinessClock):
         self.cfg, self.store, self.clock = cfg, store, clock
+        self.work_clock = BusinessClock.work(cfg)
 
     def build(self, start: dt.datetime, end: dt.datetime) -> str:
         s, e = int(start.timestamp()), int(end.timestamp())
@@ -39,7 +40,7 @@ class Digest:
         # Response time per admin (business minutes), only waits that ended with a reply.
         per_admin: dict[str, list[float]] = {}
         for w in self.store.q("SELECT * FROM waits WHERE ended_by=? AND ended_at>=? AND ended_at<?", (AWAITING_THEM, s, e)):
-            mins = self.clock.business_minutes_between(dt.datetime.fromtimestamp(w["started_at"], dt.timezone.utc),
+            mins = self.work_clock.business_minutes_between(dt.datetime.fromtimestamp(w["started_at"], dt.timezone.utc),
                                                        dt.datetime.fromtimestamp(w["ended_at"], dt.timezone.utc))
             per_admin.setdefault(w["assignee"] or "-", []).append(mins)
 

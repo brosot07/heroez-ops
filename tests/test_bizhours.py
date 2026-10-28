@@ -21,11 +21,23 @@ def test_sunday_is_closed(cfg):
     assert not c.is_open(wib(2026, 11, 8, 12, 0))
 
 
-def test_holiday_is_closed(cfg):
+def test_holiday_counts_as_weekend_for_notifications(cfg):
     c = BusinessClock(cfg)
-    assert not c.is_open(wib(2026, 12, 25, 12, 0))
-    # Thu 20:30 -> Sat 09:30 skips the Friday holiday
-    assert c.business_minutes_between(wib(2026, 12, 24, 20, 30), wib(2026, 12, 26, 9, 30)) == 60
+    assert c.is_open(wib(2026, 12, 25, 12, 0))          # reminders still run on the holiday...
+    assert c.is_quiet_day(wib(2026, 12, 25).date())      # ...but at weekend pace
+    assert not c.is_quiet_day(wib(2026, 12, 24).date())
+
+
+def test_work_clock_excludes_holidays_and_evenings(cfg):
+    import dataclasses
+    import datetime as dt
+    wc = BusinessClock.work(dataclasses.replace(cfg, work_days=frozenset(range(5)), work_start=dt.time(9, 30),
+                                                work_end=dt.time(18, 30)))
+    assert not wc.is_open(wib(2026, 12, 25, 12, 0))      # holiday
+    assert not wc.is_open(wib(2026, 11, 7, 12, 0))       # Saturday
+    assert not wc.is_open(wib(2026, 11, 2, 19, 0))       # after 18:30
+    # Mon 18:00 -> Tue 10:00 = 30 + 30 work minutes
+    assert wc.business_minutes_between(wib(2026, 11, 2, 18, 0), wib(2026, 11, 3, 10, 0)) == 60
 
 
 def test_add_business_minutes_over_weekend(cfg):

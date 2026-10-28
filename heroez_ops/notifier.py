@@ -90,7 +90,7 @@ class Notifier:
 
     def flush(self, now: dt.datetime) -> None:
         now_ts = int(now.timestamp())
-        weekend = now.astimezone(self.cfg.tz).weekday() in self.cfg.weekend_days
+        weekend = self.clock.is_quiet_day(now.astimezone(self.cfg.tz).date())
         gap = (self.cfg.weekend_min_minutes_between_messages if weekend
                else self.cfg.min_minutes_between_messages) * 60
         for row in self.store.q("SELECT DISTINCT chat_id FROM outbox WHERE sent_at IS NULL"):

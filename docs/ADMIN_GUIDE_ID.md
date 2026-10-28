@@ -25,8 +25,10 @@ Di PC, buka WhatsApp lewat **web.whatsapp.com**, bukan aplikasi Windows.
 | 🔴 **Lewat 24 jam** | Sudah lebih dari sehari. Balas secepatnya. |
 | ☀️ **Selamat pagi** (09:30) | Daftar chat yang masih menunggu, dari yang paling lama |
 
-Jam kerja: setiap hari 09:30–21:00 WIB, kecuali tanggal merah. Pesan malam hari baru dihitung besok pagi.
-Paling banyak **1 notifikasi per jam** (Sabtu–Minggu: **1 per 6 jam**). Semua chat yang menunggu dikumpulkan jadi satu daftar.
+Jam kerja: Senin–Jumat 09:30–18:30 WIB. Notifikasi dikirim setiap hari **09:30–21:00 WIB**;
+pesan yang masuk setelah 21:00 baru diingatkan besok pagi (kecuali yang urgent).
+Paling banyak **1 notifikasi per jam**. Sabtu, Minggu dan tanggal merah: **1 per 6 jam**.
+Semua chat yang menunggu dikumpulkan jadi satu daftar.
 Chat yang belum dibalas akan muncul lagi tiap jam sampai dibalas.
 
 **AI:** sebelum notifikasi dikirim, AI membaca pesan terakhir klien dan menentukan apakah itu pertanyaan,

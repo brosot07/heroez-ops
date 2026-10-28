@@ -6,6 +6,7 @@ touching files. Saving validates the config, writes it, then restarts the servic
 """
 from __future__ import annotations
 
+import datetime as dt
 import html
 import json
 import secrets as pysecrets
@@ -64,6 +65,24 @@ class SetupUI:
     def raw(self) -> dict:
         return yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
 
+    def holidays(self) -> list[str]:
+        p = self.home / "config" / "holidays.yaml"
+        raw = (yaml.safe_load(p.read_text(encoding="utf-8")) or {}) if p.exists() else {}
+        return sorted(str(d) for d in raw.get("holidays") or [])
+
+    @staticmethod
+    def parse_holidays(text: str) -> list[str]:
+        out = []
+        for line in text.replace(",", "\n").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(dt.date.fromisoformat(line).isoformat())
+            except ValueError as e:
+                raise ConfigError(f"Tanggal merah tidak valid: {line!r} (pakai format 2027-03-10)") from e
+        return sorted(set(out))
+
     def secrets(self) -> dict:
         return secretstore.load(self.secrets_path)
 
@@ -98,6 +117,9 @@ class SetupUI:
         bh["days"] = [d for d in range(7) if form.get(f"day{d}")]
         bh["start"], bh["end"] = g("start", "09:30"), g("end", "21:00")
         bh.setdefault("holidays_file", "config/holidays.yaml")
+        wh = raw.setdefault("work_hours", {})
+        wh.setdefault("days", [0, 1, 2, 3, 4])
+        wh["start"], wh["end"] = bh["start"], g("work_end", "18:30")
 
         raw.setdefault("ai", {})["enabled"] = bool(form.get("ai_enabled"))
 
@@ -177,6 +199,7 @@ class SetupUI:
         days = "".join(f'<label style="display:inline;font-weight:400;margin-right:10px"><input type="checkbox" name="day{d}" '
                        f'{"checked" if d in (bh.get("days") or []) else ""}> {DAYS[d]}</label>' for d in range(7))
         wk_days = (raw.get("weekend") or {}).get("days") or []
+        holidays_text = "\n".join(self.holidays())
         weekend_days = "".join(f'<label style="display:inline;font-weight:400;margin-right:10px"><input type="checkbox" name="wkd{d}" '
                                f'{"checked" if d in wk_days else ""}> {DAYS[d]}</label>' for d in range(7))
         newcomer_html = "".join(f"<li>{_e(u['name'])} {('@' + _e(u['username'])) if u.get('username') else ''}: <code>{_e(u['id'])}</code></li>"
@@ -225,8 +248,11 @@ AI (Claude): <b>{ai_status}</b></p>
 <table><tr><th>Nama</th><th>ID Telegram</th>{spv_head}</tr>{admin_rows}</table></div>
 
 <div class="card"><h2>5. Jam kerja & pengingat</h2>{days}
-<div class="row"><div><label>Mulai</label><input type="time" name="start" value="{_e(bh.get("start", "09:30"))}"></div>
-<div><label>Selesai</label><input type="time" name="end" value="{_e(bh.get("end", "21:00"))}"></div></div>
+<div class="row"><div><label>Mulai kerja & notifikasi</label><input type="time" name="start" value="{_e(bh.get("start", "09:30"))}"></div>
+<div><label>Notifikasi berhenti</label><input type="time" name="end" value="{_e(bh.get("end", "21:00"))}"></div></div>
+<label>Jam kerja selesai <small>(untuk mengukur waktu balas, Senin–Jumat)</small></label><input type="time" name="work_end" value="{_e((raw.get("work_hours") or {}).get("end", "18:30"))}">
+<label>Tanggal merah <small>(satu per baris, format 2027-03-10; dihitung seperti akhir pekan)</small></label>
+<textarea name="holidays" rows="6" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)">{_e(holidays_text)}</textarea>
 <div class="row"><div><label>Ingatkan admin setelah <small>(menit jam kerja)</small></label><input type="number" name="nudge" value="{_e(esc.get("nudge_assignee_after_business_min", 30))}"></div>
 <div><label>Libatkan supervisor setelah <small>(menit jam kerja)</small></label><input type="number" name="group" value="{_e(esc.get("alert_group_after_business_min", 120))}"></div></div>
 <div class="row"><div><label>Ulangi pengingat tiap <small>(menit jam kerja, 0 = tidak)</small></label><input type="number" name="repeat" value="{_e(esc.get("repeat_every_business_min", 60))}"></div>
@@ -302,7 +328,12 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
             form = await form_of(request)
             raw, sec = self.apply_form(self.raw(), form, self.secrets())
             try:
+                hol = self.parse_holidays(form.get("holidays", "")) if "holidays" in form else None
                 self.save(raw, sec)
+                if hol is not None:
+                    (self.home / "config" / "holidays.yaml").write_text(
+                        "# Public holidays and cuti bersama (edited from the settings page).\n"
+                        + yaml.safe_dump({"holidays": hol}), encoding="utf-8")
             except ConfigError as e:
                 return self.page(f"Belum tersimpan: {e}", ok=False)
             self.request_restart()

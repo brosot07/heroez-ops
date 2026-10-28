@@ -6,11 +6,18 @@ mode: shadow            # shadow = compute + log alerts, send nothing. live = se
 timezone: Asia/Jakarta
 
 business_hours:
+  # Notification hours: reminder timers run and alerts go out inside these hours.
   # 0 = Monday ... 6 = Sunday. Days listed here run the reminder timers.
   days: [0, 1, 2, 3, 4, 5, 6]
   start: "09:30"
   end: "21:00"
   holidays_file: config/holidays.yaml
+
+work_hours:
+  # The admins' working day. Used to measure response times in the daily digest.
+  days: [0, 1, 2, 3, 4]
+  start: "09:30"
+  end: "18:30"
 
 whatsapp:
   # The Heroez number, digits only with country code (e.g. 6281234567890).
@@ -58,6 +65,7 @@ alerts:
 
 weekend:
   days: [5, 6]                       # Saturday, Sunday
+  holidays_count_as_weekend: true   # public holidays (config/holidays.yaml) behave like weekends
   min_minutes_between_messages_per_recipient: 360   # at most 1 notification per person per 6 hours
 
 digest:

@@ -1,7 +1,9 @@
 """Business-hours arithmetic in WIB.
 
-All datetimes passed in must be timezone-aware. Business minutes count only time
-inside business hours on business days that are not holidays.
+All datetimes passed in must be timezone-aware. Two clocks use this class:
+  * the notification clock (default): business_hours from config; reminder timers.
+    Holidays count as open days when they are treated like weekends.
+  * the work clock (BusinessClock.work): the admins' working day, for response-time metrics.
 """
 from __future__ import annotations
 
@@ -11,18 +13,28 @@ from .config import Config
 
 
 class BusinessClock:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, days: frozenset[int] | None = None, start: dt.time | None = None,
+                 end: dt.time | None = None, holidays_closed: bool | None = None):
         self.cfg = cfg
+        self.days = cfg.business_days if days is None else days
+        self.start = start or cfg.business_start
+        self.end = end or cfg.business_end
+        self.holidays_closed = (not cfg.holidays_as_weekend) if holidays_closed is None else holidays_closed
+
+    @classmethod
+    def work(cls, cfg: Config) -> "BusinessClock":
+        return cls(cfg, cfg.work_days, cfg.work_start, cfg.work_end, holidays_closed=True)
 
     def is_business_day(self, d: dt.date) -> bool:
-        return d.weekday() in self.cfg.business_days and d not in self.cfg.holidays
+        return d.weekday() in self.days and not (self.holidays_closed and d in self.cfg.holidays)
+
+    def is_quiet_day(self, d: dt.date) -> bool:
+        """Weekend-style day: fewer notifications."""
+        return d.weekday() in self.cfg.weekend_days or (self.cfg.holidays_as_weekend and d in self.cfg.holidays)
 
     def _day_bounds(self, d: dt.date) -> tuple[dt.datetime, dt.datetime]:
         tz = self.cfg.tz
-        return (
-            dt.datetime.combine(d, self.cfg.business_start, tz),
-            dt.datetime.combine(d, self.cfg.business_end, tz),
-        )
+        return dt.datetime.combine(d, self.start, tz), dt.datetime.combine(d, self.end, tz)
 
     def is_open(self, t: dt.datetime) -> bool:
         local = t.astimezone(self.cfg.tz)

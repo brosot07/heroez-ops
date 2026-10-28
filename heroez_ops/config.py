@@ -48,6 +48,10 @@ class Config:
     business_start: dt.time
     business_end: dt.time
     holidays: frozenset[dt.date]
+    work_days: frozenset[int]
+    work_start: dt.time
+    work_end: dt.time
+    holidays_as_weekend: bool
     business_number: str
     window_hours: int
     admins: tuple[Admin, ...]
@@ -189,6 +193,10 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         business_start=start,
         business_end=end,
         holidays=frozenset(holidays),
+        work_days=frozenset(int(d) for d in (raw.get("work_hours") or {}).get("days", [0, 1, 2, 3, 4])),
+        work_start=_time((raw.get("work_hours") or {}).get("start", "09:30"), "work_hours.start"),
+        work_end=_time((raw.get("work_hours") or {}).get("end", "18:30"), "work_hours.end"),
+        holidays_as_weekend=bool((raw.get("weekend") or {}).get("holidays_count_as_weekend", True)),
         business_number="".join(ch for ch in str(wa.get("business_number", "")) if ch.isdigit()),
         window_hours=int(wa.get("window_hours", 24)),
         admins=tuple(admins),
