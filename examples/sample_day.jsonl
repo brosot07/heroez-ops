@@ -1,0 +1,10 @@
+# A made-up Monday. dir=in: client -> Heroez; dir=out: admin reply seen via echo.
+{"at": "2026-11-02T09:05:00+07:00", "wa_id": "628111000001", "dir": "in", "name": "Glowskin Beauty", "text": "Halo kak, kami brand skincare mau campaign TikTok bulan depan. Boleh minta rate card?"}
+{"at": "2026-11-02T09:20:00+07:00", "wa_id": "628111000002", "dir": "in", "name": "Kopi Senja", "text": "Kak ada talent F&B untuk Instagram reels?"}
+{"at": "2026-11-02T09:31:00+07:00", "wa_id": "628111000002", "dir": "out", "text": "Halo kak! Ada, boleh info budget & timelinenya?"}
+{"at": "2026-11-02T09:40:00+07:00", "wa_id": "628111000002", "dir": "in", "text": "ok kak nanti aku info ya 🙏"}
+{"at": "2026-11-02T10:10:00+07:00", "wa_id": "628111000003", "dir": "in", "name": "Talent Dewi", "text": "Kak, pembayaran campaign Oktober kapan ya?"}
+{"at": "2026-11-02T11:00:00+07:00", "wa_id": "628111000004", "dir": "in", "name": "Agency Nusantara", "text": "Hi, can you share your gaming talent list?"}
+{"at": "2026-11-02T13:30:00+07:00", "wa_id": "628111000004", "dir": "in", "text": "thanks for the list!"}
+{"at": "2026-11-02T14:00:00+07:00", "wa_id": "628111000005", "dir": "in", "name": "Random", "type": "sticker", "text": ""}
+{"at": "2026-11-02T22:15:00+07:00", "wa_id": "628111000006", "dir": "in", "name": "TechNova", "text": "Halo, kami butuh 5 KOL tech untuk launching 10 Nov. Budget 150jt. Bisa dibantu?"}
