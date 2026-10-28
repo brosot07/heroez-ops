@@ -29,11 +29,12 @@ PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20)}   # USD per million tokens: in
 
 class Drafter:
     def __init__(self, api_key: str, store: Store, kb: KB, tz, model: str = "claude-sonnet-5-5",
-                 max_per_day: int = 150, client=None):
+                 max_per_day: int = 150, client=None, learning=None):
         if client is None:
             import anthropic
             client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=2)
         self.client, self.store, self.kb, self.tz, self.model, self.max_per_day = client, store, kb, tz, model, max_per_day
+        self.learning = learning
 
     def ensure(self, wa_id: str) -> None:
         """Make sure the conversation has a draft for its latest client message."""
@@ -72,7 +73,8 @@ class Drafter:
                 fallbacks="default",
                 output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
                 system=[{"type": "text", "text": PROMPT},
-                        {"type": "text", "text": f"<knowledge_base>\n{kb_text}\n</knowledge_base>",
+                        {"type": "text", "text": f"<knowledge_base>\n{kb_text}\n</knowledge_base>"
+                                                 + (f"\n\n{self.learning.examples_for_prompt()}" if self.learning else ""),
                          "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": f"<chat>\n{transcript}\n</chat>\n\nTulis saran balasan."}],
             )

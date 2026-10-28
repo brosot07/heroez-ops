@@ -204,6 +204,26 @@ CREATE TABLE IF NOT EXISTS doc_imports (
     decided_at INTEGER,
     decided_by TEXT
 );
+CREATE TABLE IF NOT EXISTS reply_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT,
+    client_text TEXT NOT NULL,               -- redacted
+    admin_reply TEXT NOT NULL,               -- redacted
+    status TEXT NOT NULL,                    -- candidate | approved
+    created_at INTEGER NOT NULL,
+    approved_at INTEGER,
+    approved_by TEXT
+);
+CREATE TABLE IF NOT EXISTS draft_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT NOT NULL,
+    msg_id TEXT NOT NULL,
+    draft TEXT NOT NULL,
+    actual TEXT NOT NULL,
+    similarity REAL NOT NULL,
+    outcome TEXT NOT NULL,                   -- used | edited | ignored
+    at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

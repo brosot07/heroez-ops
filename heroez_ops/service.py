@@ -20,6 +20,7 @@ from . import calendar_sync, sheet_sync
 from .concierge_ai import ConciergeAI
 from .intake import Intake
 from .kb import KB
+from .learning import Learning
 from .links import LinkChecker
 from .notifier import Notifier
 from .sources.base import MessageEvent
@@ -56,6 +57,7 @@ class Service:
         # Phase 2: knowledge base, Cloud API sender (shadow unless live), menu bot, reply drafts.
         self.kb = KB(store)
         self.links = LinkChecker(store, cfg.urlhaus_auth_key)
+        self.learning = Learning(store)
         shadow_dir = Path(data_dir) if data_dir else Path("data")
         self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
@@ -67,7 +69,7 @@ class Service:
         self.drafter = drafter
         if self.drafter is None and cfg.drafts_enabled and cfg.anthropic_api_key:
             self.drafter = Drafter(cfg.anthropic_api_key, store, self.kb, cfg.tz, model=cfg.drafts_model,
-                                   max_per_day=cfg.max_drafts_per_day)
+                                   max_per_day=cfg.max_drafts_per_day, learning=self.learning)
         if self.drafter:
             self.notifier.before_alert = self.drafter.ensure
         reply_notifier = Notifier(cfg, store, self.clock, self.reply_channel)
@@ -109,6 +111,11 @@ class Service:
                     self.intake.on_event(ev)
                 except Exception:
                     log.exception("intake failed for %s", ev.wa_id)
+                if ev.direction == "out":
+                    try:
+                        self.learning.on_admin_reply(ev)
+                    except Exception:
+                        log.exception("learning hook failed for %s", ev.wa_id)
 
     # -- Telegram long polling -------------------------------------------
     def poll_telegram_once(self, wait_seconds: int = 25) -> int:
@@ -195,6 +202,7 @@ class Service:
         self.store.x("UPDATE state_changes SET reason='(kedaluwarsa)' WHERE at < ? AND reason != '(kedaluwarsa)'", (cutoff,))
         self.store.x("DELETE FROM message_links WHERE msg_id IN (SELECT id FROM messages WHERE ts < ?)", (cutoff,))
         self.store.x("DELETE FROM link_checks WHERE checked_at < ?", (now_ts - 7 * 86400,))
+        self.learning.prune(cutoff)
         self.store.x("UPDATE audit_log SET detail=NULL WHERE at < ? AND detail IS NOT NULL", (now_ts - 365 * 86400,))
         self.store.audit("system", "retention", None, {"texts_erased": erased, "raw_deleted": pruned}, now_ts)
         if self.data_dir:

@@ -114,6 +114,22 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                 f'ke tabel; kamu memeriksa dan menyetujui sebelum masuk ke daftar KOL. Tidak ada yang terkirim ke klien dari langkah ini.</p>'
                 f'{upload("/pengetahuan/dokumen", "Upload & baca", ".pptx,.pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.webp")}'
                 f'<table style="margin-top:12px"><tr><th>Dokumen</th><th>Status</th></tr>{imp_rows}</table></div>')
+        from .learning import Learning
+        learn = Learning(ui.store)
+        cands = learn.candidates(10)
+        n_approved = ui.store.one("SELECT COUNT(*) n FROM reply_examples WHERE status='approved'")["n"]
+        cand_rows = "".join(
+            f'<div class="card" style="margin:8px 0"><input type="hidden" name="ex_id_{i}" value="{c["id"]}">'
+            f'<label>Klien</label><textarea name="ex_q_{i}" rows="2" {dis}>{e(c["client_text"])}</textarea>'
+            f'<label>Balasan admin</label><textarea name="ex_a_{i}" rows="3" {dis}>{e(c["admin_reply"])}</textarea>'
+            f'<label style="font-weight:400"><input type="radio" name="ex_do_{i}" value="approve" {dis}> Jadikan contoh</label> '
+            f'<label style="font-weight:400"><input type="radio" name="ex_do_{i}" value="reject" {dis}> Buang</label> '
+            f'<label style="font-weight:400"><input type="radio" name="ex_do_{i}" value="" checked {dis}> Nanti</label></div>'
+            for i, c in enumerate(cands)) or '<p class="muted">Belum ada balasan admin yang bisa dijadikan contoh.</p>'
+        examples = (f'<form method="post" action="/pengetahuan/contoh">{csrf}<div class="card"><h2>Belajar dari balasan admin ({n_approved} contoh disetujui)</h2>'
+                    f'<p class="muted">Balasan admin yang bagus dijadikan contoh gaya untuk saran AI (nomor panjang sudah disamarkan). '
+                    f'Pilih yang mewakili cara Heroez menjawab; buang yang tidak.</p>{cand_rows}'
+                    f'<button type="submit" {dis}>Simpan pilihan</button></div></form>')
         cal_status = json.loads(ui.store.get_kv("calendar_status", "{}") or "{}")
         urls = kb.get("calendar_urls", []) or []
         n_own = ui.store.one("SELECT COUNT(*) n FROM talents WHERE calendar_url LIKE 'http%'")["n"]
@@ -169,7 +185,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                 f'<div class="card"><h2>Kalimat bot</h2><p class="muted">Dikirim bot apa adanya. {{sla}} diganti dengan janji waktu balas '
                 f'dari Pengaturan; {{names}} dengan nama talent.</p>{texts_html}</div>'
                 f'<button type="submit" {dis}>Simpan</button></form>')
-        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{sheet}{kol}{docs}{gcal}{cal}{rc}{faq}{rest}'
+        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{sheet}{kol}{docs}{gcal}{cal}{rc}{faq}{examples}{rest}'
 
     @r.get("/pengetahuan/contoh.xlsx")
     async def example(request: Request):
@@ -366,6 +382,22 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         await form(request)
         ui.store.x("UPDATE doc_imports SET status='cancelled', decided_at=?, decided_by=? WHERE id=?", (int(time.time()), user.key, did))
         return back("Dokumen dibuang; daftar KOL tidak berubah.")
+
+    @r.post("/pengetahuan/contoh")
+    async def examples_save(request: Request):
+        user = await who(request)
+        manager(user)
+        f = await form(request)
+        from .learning import Learning
+        learn = Learning(ui.store)
+        i, done = 0, 0
+        while f"ex_id_{i}" in f:
+            do = str(f.get(f"ex_do_{i}", ""))
+            if do in ("approve", "reject"):
+                learn.decide(int(f[f"ex_id_{i}"]), do == "approve", user.key, str(f.get(f"ex_q_{i}", "")), str(f.get(f"ex_a_{i}", "")))
+                done += 1
+            i += 1
+        return back(f"{done} contoh diproses.")
 
     @r.post("/pengetahuan/ratecard")
     async def ratecard_upload(request: Request):
