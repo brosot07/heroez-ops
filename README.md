@@ -1,11 +1,21 @@
-# Heroez Ops: WhatsApp reply reminders
+# Heroez Ops: WhatsApp reply reminders, brand bot, contracts and deals
 
-Listen-only service: reads the Heroez WhatsApp Business number (Meta Cloud API, coexistence),
-works out which chats are waiting on us, and reminds admins on Telegram. It never messages
-clients. Admins keep replying from the WhatsApp Business app or WhatsApp Web.
+Reads the Heroez WhatsApp Business number (Meta Cloud API, coexistence), works out which chats are
+waiting on us, and reminds admins on Telegram. Admins keep replying from the WhatsApp Business app or
+WhatsApp Web. Phase 2 adds a bot that answers new brands (KOL rates and availability from the ops
+sheets) before handing over to a person; Phase 3 adds contracts from approved templates and a deal
+pipeline mirrored to the ops Google Sheet.
 
-**Status:** reminders with optional AI check, built and tested against simulated Meta payloads.
-Not yet connected to a real number. See `docs/PHASE0_REPORT.md` for open items.
+**Status:** built and tested against simulated Meta payloads (214 tests). Not yet connected to a real
+number. See `docs/PHASE0_REPORT.md` for open items.
+
+## Documents
+- `docs/SETUP_WINDOWS.md` — install on the host PC, Telegram, tunnel, AI, contracts, bot, deals
+- `docs/SETUP_RUNBOOK.md` — Meta app, webhook, coexistence onboarding, tokens, go-live checklist
+- `docs/OPERATIONS.md` — what runs where, modes, automatic behaviour, weekly checks, incidents, costs
+- `docs/ADMIN_GUIDE_ID.md` — for admins (Bahasa Indonesia)
+- `docs/DATA_FLOW_ID.md` — data-flow note for clients and talents (UU PDP)
+- `docs/deals_sheet.gs` — Apps Script for the deals tab of the ops Google Sheet
 
 ## What it does
 - Stores inbound messages, admin replies (`smb_message_echoes`) and history backfill; dedupes by message id.
@@ -16,7 +26,9 @@ Not yet connected to a real number. See `docs/PHASE0_REPORT.md` for open items.
   P1 4 h → management; 18 h real time → urgent (on-call admin outside hours); 24 h → overdue.
 - Batching: at most one Telegram message per person per hour (weekends: per 6 hours); unreplied chats repeat hourly. Notifications 09:30–21:00 WIB; work hours 09:30–18:30 Mon–Fri (used for response-time metrics); holidays count as weekend. 09:30 morning list.
 - AI check (Claude Haiku, optional): reads the last messages and decides question / inquiry / closure before any alert; adds a one-line summary.
-- Telegram buttons ✋ ✅ ⏰ 🚫, commands `/antrian /semua /cari /bantuan`, whitelist by Telegram user ID.
+- Telegram buttons ✋ ✅ ⏰ (→ admin for supervisor triage, 👍/👎 in review mode), commands `/antrian /semua /cari /spam /janji /hapus /bantuan`, whitelist by Telegram user ID.
+- Promise tracker: "besok saya kirim" in an admin reply becomes a due reminder; deal pipeline with one-tap
+  confirmation of AI-spotted agreements; reply drafts that learn from approved admin replies.
 - Shadow mode (default): alerts are only written to `data/shadow_alerts.jsonl`.
 - Each admin can have their own supervisor(s), who get that admin's 2 h / 18 h / 24 h escalations.
 - Message texts erased after 90 days; daily DB backups (14 kept).

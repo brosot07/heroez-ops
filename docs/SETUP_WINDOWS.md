@@ -60,22 +60,41 @@ settings page, and fill in everyone's email in sections 3 and 4. Admins can make
 can upload or approve templates. Never add `/webhook/*` to the Access app (Meta and Telegram must reach it).
 
 ## 3d. WhatsApp bot for new brands (Phase 2)
-1. **Pengetahuan** page: upload the KOL list (Excel/CSV, one row per KOL; columns starting with "Rate" are prices;
-   phone/handler/internal-note columns are never shown), the availability sheet (Nama, Mulai, Selesai: booked dates only),
-   the rate card PDF, FAQ answers and the bot's texts. *Download contoh* gives an example sheet.
+1. **Pengetahuan** page: link the ops **Google Sheet** (tabs *KOL*, *Jadwal*, *FAQ*; share as "anyone with the link
+   can view"; re-read every ~6 hours) or upload the KOL list (Excel/CSV, one row per KOL; columns starting with "Rate"
+   are prices; a *Tipe* column marks exclusive / non-exclusive / nano; phone/handler/internal-note columns are never
+   shown), the rate card PDF, FAQ answers and the bot's texts. *Download contoh* gives an example sheet.
+   Any deck or document (PPT/PDF/Word/Excel/image) can be dropped in **Dokumen**: the AI reads it into a KOL table
+   that a supervisor checks and approves before it is used — nothing from a document reaches the bot unreviewed.
+   **Google Calendar**: paste the shared calendar's secret iCal address (and per-talent calendars if any); only
+   busy/free per date is kept, never the event text.
 2. Settings, section 7: tick the bot options, set the reply-time promise and the monthly message limit.
    Section 9: the Meta **Phone number ID** and a permanent **System user access token** (from the Meta app).
 3. Keep **Shadow** mode for the first week: the bot's would-be messages are written to
    `data\shadow_alerts.jsonl` (type `whatsapp_send`) so you can read exactly what it would have said.
 4. What the bot does: ignores spam (listed daily, `/spam` in Telegram to rescue), asks brands what they need and which
-   KOLs, replies with each KOL's rate and ✅/❌ availability straight from your sheets, then hands over to an admin.
-   Talents and existing clients never get the bot; it stops as soon as an admin replies.
+   KOLs, replies with each KOL's rate and ✅/❌ availability straight from your sheets (exact rates only once the
+   brand has named itself; non-exclusive and nano talents get "mulai dari" / "admin kami konfirmasi"), cross-sells
+   alternatives when a KOL is booked, and hands over to the KOL's handler. Specific-hour requests, brands that name no
+   KOL or ask for "solutions", and nano work go to the supervisors to assign (→ admin buttons; 30-minute fallback).
+   Off-topic questions get one polite redirect, then silence. Talents and existing clients never get the bot; it
+   stops as soon as an admin replies.
+5. **Review** mode (section 1) is the step between Shadow and Live: alerts go to supervisors only, each with 👍/👎,
+   and the digest reports the accuracy. Switch to Live when the numbers look right.
+
+## 3e. Deals and the ops Google Sheet (Phase 3)
+1. In the ops Google Sheet: *Extensions → Apps Script*, paste `docs/deals_sheet.gs`, set a long random `TOKEN`,
+   *Deploy → New deployment → Web app* (Execute as: me; Who has access: Anyone) → copy the web app URL.
+2. Settings section 8: paste the URL and the token; adjust the stage names if ops uses other words → Simpan.
+3. The **Deal** page shows the pipeline; the *Deals* tab in the Sheet mirrors it every morning and at key events.
+   Columns you add to the right of the app's columns are kept. Lunas and Batal can only be set by supervisors.
+4. Leads appear by themselves (bot hand-over, AI-spotted agreement confirmed by the admin on Telegram, contracts).
 
 ## 4. Meta (WhatsApp)
 Follow `SETUP_RUNBOOK.md` for the Meta app and coexistence onboarding. In the Meta app's WhatsApp → Configuration:
 - **Callback URL** and **Verify token**: copy them from the top of our settings page.
 - Subscribe to: `messages`, `smb_message_echoes`, `history`, `smb_app_state_sync`.
-- Paste the Meta **App Secret** into section 6 of our settings page.
+- Paste the Meta **App Secret** into section 9 of our settings page.
 
 ## 4b. Links in messages
 The app never opens a link from a WhatsApp message, and neither does the AI. Every link is checked by its address
@@ -96,7 +115,7 @@ The program starts in **Shadow** mode: it works out reminders and logs them to
 ## Where things are kept
 `C:\ProgramData\HeroezOps` (readable only by Administrators):
 `config\` settings · `data\heroez.db` chat states and history · `data\backups\` daily copies (14 days) ·
-`logs\` program logs · `secrets.bin` tokens (encrypted by Windows).
+`logs\` program logs · `secrets.bin` tokens (encrypted by Windows) · `data\templates`, `data\contracts`, `data\kb` documents.
 Message texts are erased after 90 days; states and timings stay. Uninstalling keeps this folder.
 Backups sit on the same disk: copy `data\backups` elsewhere now and then if the history matters to you.
 

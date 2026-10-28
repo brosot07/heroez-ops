@@ -341,8 +341,10 @@ class Store:
         counts = {}
         with self.tx():
             for table in ("messages", "conversations", "state_changes", "waits", "feedback", "intake", "message_links",
-                          "outbox", "contacts"):
+                          "outbox", "contacts", "reply_examples", "draft_outcomes", "promises"):
                 counts[table] = self.x(f"DELETE FROM {table} WHERE wa_id=?", (wa_id,)).rowcount
+            # Deals are business records: keep brand/value/stage, drop the person's number and name.
+            counts["deals"] = self.x("UPDATE deals SET wa_id='', contact_name='' WHERE wa_id=?", (wa_id,)).rowcount
             counts["audit_log"] = self.x("UPDATE audit_log SET wa_id='(dihapus)', detail=NULL WHERE wa_id=?", (wa_id,)).rowcount
         return counts
 
