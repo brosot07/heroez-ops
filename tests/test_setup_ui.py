@@ -52,12 +52,12 @@ def logged_in(ui) -> TestClient:
 
 
 def test_invalid_config_is_not_saved(ui, tmp_path):
-    before = (tmp_path / "config" / "config.yaml").read_text()
+    before = (tmp_path / "config" / "config.yaml").read_text(encoding="utf-8")
     bad = dict(FORM, start="21:00", end="09:00")
     c = logged_in(ui)
     r = c.post("/save", data={**bad, "csrf": ui.csrf})
     assert "Belum tersimpan" in r.text
-    assert (tmp_path / "config" / "config.yaml").read_text() == before
+    assert (tmp_path / "config" / "config.yaml").read_text(encoding="utf-8") == before
     assert ui.restarted == []
 
 
