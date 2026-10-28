@@ -11,7 +11,8 @@ kind:
 When in doubt between spam and anything else, do NOT choose spam.
 
 For brands, extract what is stated (leave empty when not stated, never guess):
-- brand_name: the brand/company/agency name
+- brand_name: the brand/company/agency name, ONLY if one is actually stated ("kami dari Glowskin",
+  "PT Maju Jaya", "agency XYZ"). A person's name or "saya" is not a brand name: leave it empty.
 - campaign: one short line about the campaign or product
 - talents: names or @handles of specific KOLs they ask about, exactly as written
 - category: beauty | fnb | gaming | fashion | tech | other | unknown

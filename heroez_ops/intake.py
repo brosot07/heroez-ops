@@ -51,6 +51,9 @@ EN_TEXTS = {
     "price_note": "Prices are per content, excluding tax.",
     "ratecard_caption": "Here is our package rate card 🙏",
     "handover": "Our admin will continue the discussion within {sla} 🙏",
+    "handover_offhours": "Our admin will continue the discussion during the next working hours 🙏",
+    "nano_handover": "For nano/micro KOL needs we have dedicated packages; our supervisor will propose one 🙏",
+    "ask_company": "Could you tell us your brand/agency name? We'll send detailed rates after that 🙏",
     "talent_prompt": "Hi! Please send your handle (IG/TikTok/YouTube), main platform and follower count 🙏",
     "talent_done": "Thank you! Our talent team will contact you 🙏",
     "other_prompt": "Sure, please tell us briefly what you need. Our team will reply as soon as possible 🙏",
@@ -71,6 +74,8 @@ class Intake:
         self.cfg, self.store, self.engine, self.kb, self.sender = cfg, store, engine, kb, sender
         self.files_dir, self.ai = files_dir, ai
         self.now = int(time.time())
+        from .bizhours import BusinessClock
+        self.clock = BusinessClock(cfg)
 
     # -- entry points -------------------------------------------------------------
     def on_event(self, ev: MessageEvent, now: int | None = None) -> None:
@@ -149,6 +154,8 @@ class Intake:
 
     # -- sending ----------------------------------------------------------------------
     def _t(self, key: str, lang: str, **kw) -> str:
+        if key == "handover" and not self.clock.is_open(dt.datetime.fromtimestamp(self.now, dt.timezone.utc)):
+            key = "handover_offhours"       # no "within 1 working hour" promise at 23:00 or on a holiday
         t = EN_TEXTS[key] if lang == "en" else self.kb.text(key)
         t = t.replace("{sla}", self.cfg.sla_text)
         for k, v in kw.items():
@@ -304,24 +311,37 @@ class Intake:
         lines: list[str] = []
         found, missing = tl.find_talents(self.store, u.talents) if u.talents else ([], [])
         alternatives = []
+        qualified = bool(u.brand_name.strip())          # exact rates only for an identified brand/agency
+        if any(tl.ttype(r) == "nano" for r in found):
+            # Nano KOL work is packaged and priced by people; never listed individually.
+            self._text(wa, self._t("nano_handover", lang))
+            self._handoff(self.row(wa), "minta nano KOL", triage=True)
+            return
+        if found and not qualified and any(json.loads(r["data"])["rates"] for r in found) \
+                and not json.loads(row["data"]).get("asked_company") and json.loads(row["data"]).get("asked", 0) < MAX_QUESTIONS:
+            data = json.loads(row["data"])
+            data["asked_company"], data["asked"] = True, data.get("asked", 0) + 1
+            self._set(wa, data=data, step="brand_company")
+            self._text(wa, self._t("ask_company", lang))
+            return
         if found:
             lines.append(self._t("talent_list_intro", lang))
-            lines += [tl.talent_line(self.store, r, u.platforms, dates, lang) for r in found]
+            lines += [tl.talent_line(self.store, r, u.platforms, dates, lang, qualified) for r in found]
             if dates:
                 busy = [r for r in found if not tl.available(self.store, r["id"], *dates)]
                 if busy:
                     alternatives = tl.alternatives(self.store, busy, u.category, dates, exclude={r["id"] for r in found})
             if alternatives:
                 lines.append(self._t("alternatives_intro", lang))
-                lines += [tl.talent_line(self.store, r, u.platforms, dates, lang) for r in alternatives]
+                lines += [tl.talent_line(self.store, r, u.platforms, dates, lang, qualified) for r in alternatives]
         if missing:
             lines.append(self._t("not_in_list", lang, names=", ".join(missing)))
         if not found:
             recs = tl.recommend(self.store, u.category, u.platforms, dates)
             if recs:
                 lines.append(self._t("recommend_intro", lang))
-                lines += [tl.talent_line(self.store, r, u.platforms, dates, lang) for r in recs]
-        if any(line.startswith("• ") for line in lines):
+                lines += [tl.talent_line(self.store, r, u.platforms, dates, lang, qualified) for r in recs]
+        if any("Rp" in line for line in lines):
             lines.append(self._t("price_note", lang))
         else:
             self._send_ratecard(wa, lang)

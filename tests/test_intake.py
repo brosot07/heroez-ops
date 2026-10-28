@@ -24,6 +24,8 @@ ROSTER = [
     {"Nama": "Raka Pratama", "Handle TikTok": "@rakagaming", "Followers TikTok": "1,2M", "Niche": "gaming",
      "Rate TikTok": "20jt", "No HP": "0813-3333-4444", "Handler": "rina"},
     {"Nama": "Sinta", "Handle IG": "@sinta.glow", "Followers IG": "300K", "Niche": "beauty", "Rate IG Reels": "25jt"},
+    {"Nama": "Bima", "Handle IG": "@bima.eats", "Followers IG": "80rb", "Niche": "fnb, kuliner", "Tipe": "non-eksklusif"},
+    {"Nama": "Paket Nano Beauty", "Niche": "beauty", "Tipe": "nano", "Handler": "rina"},
 ]
 BUSY = [{"Nama talent": "Dewi Lestari", "Mulai": "2026-11-10", "Selesai": "2026-11-12", "Brand": "RahasiaCorp"}]
 
@@ -85,7 +87,7 @@ def test_brand_naming_kols_with_dates_gets_rates_and_availability(bot):
     svc.process_payload(fixtures.inbound("628111", first, ts(T0), name="Glowskin"))
     [reply] = wire.texts()
     assert "*Dewi Lestari* (@dewi.lestari): IG Reels Rp15.000.000 — ❌ tidak tersedia di tanggal tersebut" in reply
-    assert "*Sinta* (@sinta.glow): IG Reels Rp25.000.000 — ✅ tersedia 10–12 November 2026" in reply
+    assert "*Sinta* (@sinta.glow): IG Reels Rp25.000.000 — jadwal 10–12 November 2026 terlihat kosong, akan dikonfirmasi admin" in reply
     assert "RahasiaCorp" not in reply and "0812" not in reply and "DP 50%" not in reply
     assert "Admin kami akan melanjutkan diskusinya dalam 1 jam kerja 🙏" in reply
     c = conv(svc, "628111")
@@ -107,7 +109,7 @@ def test_vague_brand_is_asked_then_asked_for_dates_then_answered(bot):
     assert "tanggal berapa" in wire.texts()[-1]                           # named a KOL, no dates
     assert conv(svc, "628222")["state"] != AWAITING_US or svc.intake.row("628222")["status"] == "active"
     svc.process_payload(fixtures.inbound("628222", "Awal Desember, 1-5 Des", ts(T0) + 120))
-    assert "*Raka Pratama* (@rakagaming): TikTok Rp20.000.000 — ✅ tersedia 1–5 Desember 2026" in wire.texts()[-1]
+    assert "*Raka Pratama* (@rakagaming): TikTok Rp20.000.000 — jadwal 1–5 Desember 2026 terlihat kosong, akan dikonfirmasi admin" in wire.texts()[-1]
     assert svc.intake.row("628222")["status"] == "done"
     assert conv(svc, "628222")["state"] == AWAITING_US
 
@@ -140,7 +142,7 @@ def test_triage_falls_back_to_round_robin_after_grace(bot):
 
 def test_named_kol_routes_to_its_handler(bot):
     msg = "Mau Raka untuk TikTok 1-5 Des"
-    svc, _, _ = bot({msg: Understanding(kind="brand", talents=["Raka"], platforms=["tiktok"],
+    svc, _, _ = bot({msg: Understanding(kind="brand", brand_name="Kopi Z", talents=["Raka"], platforms=["tiktok"],
                                         date_start="2026-12-01", date_end="2026-12-05")})
     svc.process_payload(fixtures.inbound("628335", msg, ts(T0)))
     c = conv(svc, "628335")
@@ -288,14 +290,14 @@ def test_unavailable_kol_gets_available_alternatives(bot):
     reply = wire.texts()[-1]
     assert "Dewi Lestari* (@dewi.lestari): IG Reels Rp15.000.000 — ❌ tidak tersedia" in reply
     assert "Sebagai alternatif" in reply
-    assert "*Sinta* (@sinta.glow): IG Reels Rp25.000.000 — ✅ tersedia 10–12 November 2026" in reply   # same niche, free
+    assert "*Sinta* (@sinta.glow): IG Reels Rp25.000.000 — jadwal 10–12 November 2026 terlihat kosong" in reply   # same niche, free
     assert "Raka" not in reply                                                                         # gaming: not similar
     assert "alternatif: Sinta" in svc.engine.conversation("628121")["ai_summary"]
 
 
 def test_available_kol_gets_no_cross_sell(bot):
     msg = "Sinta untuk IG tgl 10-12 Nov bisa?"
-    svc, wire, _ = bot({msg: Understanding(kind="brand", talents=["Sinta"], platforms=["instagram"],
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="Glowskin", talents=["Sinta"], platforms=["instagram"],
                                            date_start="2026-11-10", date_end="2026-11-12")})
     svc.process_payload(fixtures.inbound("628122", msg, ts(T0)))
     assert "alternatif" not in wire.texts()[-1]
@@ -303,10 +305,69 @@ def test_available_kol_gets_no_cross_sell(bot):
 
 def test_specific_hour_request_goes_to_admin(bot):
     msg = "Sinta bisa live TikTok tgl 10 Nov jam 19.00?"
-    svc, wire, _ = bot({msg: Understanding(kind="brand", talents=["Sinta"], platforms=["tiktok"], date_start="2026-11-10",
-                                           date_end="2026-11-10", asks_specific_time=True)})
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="Glowskin", talents=["Sinta"], platforms=["tiktok"],
+                                           date_start="2026-11-10", date_end="2026-11-10", asks_specific_time=True)})
     svc.process_payload(fixtures.inbound("628123", msg, ts(T0)))
     [reply] = wire.texts()
     assert reply.startswith("Admin kami akan melanjutkan") and "Rp" not in reply and "tersedia" not in reply
     assert svc.intake.row("628123")["outcome"] == "minta jam tertentu"
     assert svc.engine.conversation("628123")["state"] == AWAITING_US
+
+
+def test_unidentified_sender_is_asked_for_company_then_gets_mulai_dari(bot):
+    first = "Rate Dewi berapa?"
+    svc, wire, _ = bot({first: Understanding(kind="brand", talents=["Dewi Lestari"], platforms=["instagram"],
+                                             date_start="2026-11-20", date_end="2026-11-20")})
+    svc.process_payload(fixtures.inbound("628511", first, ts(T0)))
+    assert "nama brand/agency" in wire.texts()[-1]                     # asked who they are first
+    svc.intake.ai.understand = lambda texts, f=svc.intake.ai: Understanding(kind="brand", talents=["Dewi Lestari"],
+                                                                            platforms=["instagram"], date_start="2026-11-20",
+                                                                            date_end="2026-11-20")
+    svc.process_payload(fixtures.inbound("628511", "cuma mau tahu aja", ts(T0) + 60))     # still no company
+    reply = wire.texts()[-1]
+    assert "Dewi Lestari* (@dewi.lestari): mulai dari Rp15.000.000" in reply
+    assert "Rp15.000.000 · " not in reply                              # no full rate card for an unknown sender
+
+
+def test_identified_brand_gets_exact_rates(bot):
+    msg = "Kami dari PT Glowskin, rate Dewi untuk IG Reels?"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="PT Glowskin", talents=["Dewi Lestari"], platforms=["instagram"],
+                                           date_start="2026-11-20", date_end="2026-11-20")})
+    svc.process_payload(fixtures.inbound("628512", msg, ts(T0)))
+    assert "IG Reels Rp15.000.000" in wire.texts()[-1] and "mulai dari" not in wire.texts()[-1]
+
+
+def test_non_exclusive_talent_has_no_rate_in_bot_reply(bot):
+    msg = "Kami Kopi Senja, Bima bisa untuk IG tgl 20 Nov?"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="Kopi Senja", talents=["Bima"], platforms=["instagram"],
+                                           date_start="2026-11-20", date_end="2026-11-20")})
+    svc.process_payload(fixtures.inbound("628513", msg, ts(T0)))
+    reply = wire.texts()[-1]
+    assert "*Bima* (@bima.eats): kami bisa bantu untuk talent ini; rate dikonfirmasi admin kami" in reply
+    assert "Rp" not in reply
+
+
+def test_nano_request_goes_to_supervisor_without_names(bot):
+    msg = "Kami brand X, mau paket nano beauty"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="Brand X", talents=["Paket Nano Beauty"],
+                                           date_start="2026-11-20", date_end="2026-11-20")})
+    svc.process_payload(fixtures.inbound("628514", msg, ts(T0)))
+    reply = wire.texts()[-1]
+    assert "nano/micro KOL" in reply and "Rp" not in reply and "Paket Nano" not in reply
+    assert conv(svc, "628514")["triage_since"] and conv(svc, "628514")["assignee"] is None
+
+
+def test_handover_wording_outside_hours(bot):
+    msg = "Kami dari PT Glowskin, rate Sinta?"
+    svc, wire, _ = bot({msg: Understanding(kind="brand", brand_name="PT Glowskin", talents=["Sinta"],
+                                           date_start="2026-11-20", date_end="2026-11-20")})
+    night = wib(2026, 11, 2, 23, 30)
+    svc.process_payload(fixtures.inbound("628515", msg, ts(night)))
+    assert "jam kerja berikutnya" in wire.texts()[-1] and "1 jam kerja" not in wire.texts()[-1]
+
+
+def test_ai_context_hides_non_exclusive_rates_and_shows_type(bot):
+    svc, _, _ = bot({})
+    ctx = talents.context_for_ai(svc.store, dt.date(2026, 11, 2))
+    assert "Bima | tipe: non-eksklusif" in ctx and "Rate: tanyakan admin" in ctx
+    assert "Dewi Lestari | tipe: eksklusif" in ctx

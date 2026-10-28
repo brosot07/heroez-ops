@@ -24,6 +24,20 @@ from .terbilang import parse_amount, rupiah
 
 PRIVATE = re.compile(r"(hp|phone|telp|telepon|wa\b|whatsapp|no\.? ?wa|handler|pic|internal|private|rahasia|email|rekening|bank|npwp|ktp|nik|alamat|kalender|calendar|ical)", re.I)
 CALENDAR = re.compile(r"(kalender|calendar|ical)", re.I)
+TYPE_COL = re.compile(r"^(tipe|type|jenis|status)$", re.I)
+TYPES = ("eksklusif", "non-eksklusif", "nano")
+
+
+def talent_type(value: str, has_rates: bool) -> str:
+    """'Tipe' column → eksklusif | non-eksklusif | nano. Without the column: rates present means exclusive."""
+    v = (value or "").strip().lower().replace("_", "-").replace(" ", "-")
+    if v.startswith("nano") or v.startswith("micro") or v.startswith("mikro"):
+        return "nano"
+    if v.startswith("non") or v in ("freelance", "lepas", "partner"):
+        return "non-eksklusif"
+    if v.startswith("eks") or v.startswith("exc") or v in ("ex", "e"):
+        return "eksklusif"
+    return "eksklusif" if has_rates else "non-eksklusif"
 NAME = re.compile(r"^(nama|name|talent|kol)( talent| kol)?$", re.I)
 RATE = re.compile(r"(rate|harga|fee|tarif)", re.I)
 FOLLOW = re.compile(r"(follower|subscriber|subs)", re.I)
@@ -85,13 +99,14 @@ def import_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[i
     phone_col = next((h for h in header if PHONE.search(h)), None)
     handler_col = next((h for h in header if HANDLER.match(h.strip())), None)
     cal_col = next((h for h in header if CALENDAR.search(h)), None)
+    type_col = next((h for h in header if TYPE_COL.match(h.strip())), None)
     for i, r in enumerate(rows, start=2):
         name = r.get(name_col, "").strip()
         if not name:
             continue
         public, rates = {}, {}
         for h, v in r.items():
-            if h in (name_col, phone_col, handler_col) or not str(v).strip():
+            if h in (name_col, phone_col, handler_col, type_col) or not str(v).strip():
                 continue
             if PRIVATE.search(h):
                 continue                           # never shown to AI or clients
@@ -102,7 +117,8 @@ def import_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[i
                     problems.append(f"Baris {i} ({name}): {h} “{v}” bukan nominal, dilewati")
             else:
                 public[h] = v
-        talents.append((name, json.dumps({"info": public, "rates": rates}, ensure_ascii=False),
+        ttype = talent_type(r.get(type_col, "") if type_col else "", bool(rates))
+        talents.append((name, json.dumps({"info": public, "rates": rates, "type": ttype}, ensure_ascii=False),
                         normalize(r.get(phone_col, ""), local=True) if phone_col else "",
                         (r.get(handler_col, "") or "").strip() if handler_col else "",
                         (r.get(cal_col, "") or "").strip() if cal_col else ""))
@@ -173,9 +189,10 @@ def context_for_ai(store: Store, today: dt.date, days_ahead: int = 120) -> str:
     for t in talents:
         d = json.loads(t["data"])
         info = "; ".join(f"{k}: {v}" for k, v in d["info"].items())
-        rates = "; ".join(f"{k}: {rupiah(v)}" for k, v in d["rates"].items()) or "-"
+        kind = d.get("type", "eksklusif")
+        rates = ("; ".join(f"{k}: {rupiah(v)}" for k, v in d["rates"].items()) or "-") if kind == "eksklusif" else "tanyakan admin"
         not_free = ", ".join(busy.get(t["id"], [])) or "tidak ada jadwal terisi"
-        lines.append(f"- {t['name']} | {info} | Rate: {rates} | Tidak tersedia: {not_free}")
+        lines.append(f"- {t['name']} | tipe: {kind} | {info} | Rate: {rates} | Tidak tersedia: {not_free}")
     return (f"## Daftar KOL (hari ini {_range(today, today)}; jadwal sampai {_range(horizon, horizon)})\n"
             "Ketersediaan hanya boleh disebut tersedia / tidak tersedia. Jangan pernah menyebut alasannya.\n"
             + "\n".join(lines))
@@ -254,6 +271,8 @@ def recommend(store: Store, category: str, platforms: list[str], dates: tuple[dt
     picks = []
     for r in store.q("SELECT id, name, data FROM talents"):
         d = json.loads(r["data"])
+        if d.get("type") == "nano":
+            continue
         text = " ".join(str(v) for v in d["info"].values()).lower()
         if not any(w in text for w in words):
             continue
@@ -282,7 +301,7 @@ def alternatives(store: Store, unavailable: list, category: str, dates: tuple[dt
         return []
     picks = []
     for r in store.q("SELECT id, name, data FROM talents"):
-        if r["id"] in exclude or not available(store, r["id"], *dates):
+        if r["id"] in exclude or ttype(r) == "nano" or not available(store, r["id"], *dates):
             continue
         info = json.loads(r["data"])["info"]
         text = " ".join(str(v) for v in info.values()).lower()
@@ -296,22 +315,41 @@ def _rate_label(col: str) -> str:
     return re.sub(r"^\s*(rate|harga|fee|tarif)\s*[:\-]?\s*", "", col, flags=re.I).strip() or col
 
 
-def talent_line(store: Store, row, platforms: list[str], dates: tuple[dt.date, dt.date] | None, lang: str = "id") -> str:
+def ttype(row) -> str:
+    return json.loads(row["data"]).get("type", "eksklusif")
+
+
+def talent_line(store: Store, row, platforms: list[str], dates: tuple[dt.date, dt.date] | None, lang: str = "id",
+                qualified: bool = True) -> str:
+    """One line about a KOL for the brand.
+
+    * eksklusif: exact rates only for an identified brand (qualified); otherwise "mulai dari" the lowest rate
+    * non-eksklusif: no rate (the admin confirms), "kami bisa bantu untuk X"
+    * availability: "not available" is definite; "looks free" is confirmed by the admin
+    """
     d = json.loads(row["data"])
+    kind = d.get("type", "eksklusif")
     rates = d["rates"]
     if platforms:
         wanted = [w for p in platforms for w in PLATFORM_WORDS.get(p, [])]
         chosen = {k: v for k, v in rates.items() if any(re.search(rf"\b{w}\b", k, re.I) for w in wanted)}
         rates = chosen or rates
-    price = " · ".join(f"{_rate_label(k)} {rupiah(v)}" for k, v in rates.items()) or (
-        "rate menyusul dari admin" if lang == "id" else "rate to follow from our admin")
     handle = next((h for h in _handles(d["info"]) if h.strip()), "")
-    line = f"• *{row['name']}*" + (f" ({handle})" if handle else "") + f": {price}"
+    who = f"*{row['name']}*" + (f" ({handle})" if handle else "")
+    if kind == "non-eksklusif" or not rates:
+        price = ("kami bisa bantu untuk talent ini; rate dikonfirmasi admin kami" if lang == "id"
+                 else "we can arrange this talent; our admin will confirm the rate")
+    elif qualified:
+        price = " · ".join(f"{_rate_label(k)} {rupiah(v)}" for k, v in rates.items())
+    else:
+        low = min(rates.values())
+        price = f"mulai dari {rupiah(low)}" if lang == "id" else f"from {rupiah(low)}"
+    line = f"• {who}: {price}"
     if dates:
         span = _range(*dates)
         ok = available(store, row["id"], *dates)
         if lang == "en":
-            line += f" — ✅ available {span}" if ok else " — ❌ not available on those dates"
+            line += f" — looks free {span}, our admin will confirm" if ok else " — ❌ not available on those dates"
         else:
-            line += f" — ✅ tersedia {span}" if ok else " — ❌ tidak tersedia di tanggal tersebut"
+            line += f" — jadwal {span} terlihat kosong, akan dikonfirmasi admin" if ok else " — ❌ tidak tersedia di tanggal tersebut"
     return line
