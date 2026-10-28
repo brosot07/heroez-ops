@@ -90,6 +90,10 @@ class Engine:
                 "INSERT INTO conversations(wa_id,state,state_reason,state_since,updated_at) VALUES(?,?,?,?,?)",
                 (wa_id, new, reason, at, at),
             )
+        if old == AWAITING_US and new != AWAITING_US and conv["waiting_since"]:
+            # One finished wait = one response-time sample for the digest.
+            self.store.x("INSERT INTO waits(wa_id,started_at,ended_at,assignee,ended_by) VALUES(?,?,?,?,?)",
+                         (wa_id, conv["waiting_since"], at, conv["assignee"], new))
         if old != new:
             cols.update(state=new, state_reason=reason, state_since=at)
             self.store.x(

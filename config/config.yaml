@@ -56,7 +56,8 @@ alerts:
   max_items_per_message: 5
 
 digest:
-  admin_morning_time: "08:30"
+  admin_morning_time: "08:30"       # each admin: their waiting chats
+  management_time: "09:00"          # supervisors + management group: yesterday's numbers
 
 talent_roster_file: data/talent_roster.csv   # columns: name,phone,handler (admin key)
 

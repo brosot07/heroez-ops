@@ -13,6 +13,7 @@ from .bizhours import BusinessClock
 from .bot import Bot
 from .config import Config
 from .db import Store
+from .digest import Digest
 from .notifier import Notifier
 from .sources.base import MessageEvent
 from .sources.meta import MetaCoexistenceSource
@@ -37,6 +38,7 @@ class Service:
             telegram if cfg.live and telegram else ShadowAlertChannel(Path(data_dir) / "shadow_alerts.jsonl"))
         self.reply_channel = reply_channel or telegram or self.alert_channel
         self.notifier = Notifier(cfg, store, self.clock, self.alert_channel)
+        self.digest = Digest(cfg, store, self.clock)
         self.bot = Bot(cfg, store, self.engine, Notifier(cfg, store, self.clock, self.reply_channel), self.reply_channel)
 
     # -- ingest -----------------------------------------------------------
@@ -85,6 +87,7 @@ class Service:
         now = now or dt.datetime.now(dt.timezone.utc)
         self.process_inbox()
         self.notifier.tick(now)
+        self.digest.maybe_send(now, self.alert_channel)
         self.check_quiet_inbox(now)
         self.daily_maintenance(now)
 

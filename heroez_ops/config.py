@@ -60,6 +60,7 @@ class Config:
     min_minutes_between_messages: int
     max_items_per_message: int
     admin_morning_time: dt.time
+    management_digest_time: dt.time
     talent_roster_file: Path | None
     possibly_replied_recheck_hours: int
     message_text_days: int = 90
@@ -192,6 +193,7 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         min_minutes_between_messages=int(al.get("min_minutes_between_messages_per_recipient", 10)),
         max_items_per_message=int(al.get("max_items_per_message", 5)),
         admin_morning_time=_time((raw.get("digest") or {}).get("admin_morning_time", "08:30"), "digest.admin_morning_time"),
+        management_digest_time=_time((raw.get("digest") or {}).get("management_time", "09:00"), "digest.management_time"),
         talent_roster_file=(base_dir / roster) if roster else None,
         possibly_replied_recheck_hours=int((raw.get("possibly_replied") or {}).get("recheck_hours", 24)),
         message_text_days=int((raw.get("retention") or {}).get("message_text_days", 90)),

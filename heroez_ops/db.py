@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     wa_id TEXT,
     detail TEXT
 );
+CREATE TABLE IF NOT EXISTS waits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,    -- one row per finished AWAITING_US period
+    wa_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL,
+    assignee TEXT,
+    ended_by TEXT NOT NULL                   -- state it moved to (AWAITING_THEM = replied)
+);
+CREATE INDEX IF NOT EXISTS waits_ended ON waits(ended_at);
 CREATE TABLE IF NOT EXISTS inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,    -- raw webhook payloads, stored before acking
     source TEXT NOT NULL,
