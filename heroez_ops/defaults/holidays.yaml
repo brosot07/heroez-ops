@@ -1,0 +1,13 @@
+# Indonesian public holidays and cuti bersama (YYYY-MM-DD).
+# Fill from the official SKB 3 Menteri list each year. Days listed here count as
+# non-business days for all "business minutes" timers.
+# Fixed-date national holidays are listed; add the lunar/religious ones
+# (Imlek, Nyepi, Idul Fitri, Idul Adha, Waisak, Isra Mi'raj, Maulid, 1 Muharram,
+# Kenaikan Isa Almasih, Wafat Isa Almasih) once the official list is published.
+holidays:
+  - 2026-12-25
+  - 2027-01-01
+  - 2027-05-01
+  - 2027-06-01
+  - 2027-08-17
+  - 2027-12-25

@@ -58,9 +58,10 @@ def test_group_alert_at_two_hours(service, channel):
     t0 = wib(2026, 11, 2, 10, 0)
     service.process_payload(fixtures.inbound("628111", "Halo kak", ts(t0)))
     run(service, t0, t0 + dt.timedelta(hours=2), step_min=1)
-    chats = [m["chat_id"] for m in sends(channel)]
-    assert -100 in chats                          # admin group
-    assert tg(service, "rina") in chats           # supervisor
+    chats = {m["chat_id"] for m in sends(channel)}
+    who = assignee(service, "628111")
+    spv = {2001} if who == "rina" else {2001, 2002}
+    assert chats == {-100, tg(service, who)} | spv   # group + assignee + only their supervisors
 
 
 def test_overnight_message_waits_for_morning(service, channel):
@@ -83,7 +84,7 @@ def test_urgent_at_18_hours_goes_to_on_call_outside_hours(service, channel):
     run(service, wib(2026, 11, 8, 13, 59), wib(2026, 11, 8, 14, 0))
     urgent = [m for m in sends(channel) if "URGENT" in m["text"]]
     on_call = service.notifier.clock.on_call(wib(2026, 11, 8, 14, 0))
-    assert {m["chat_id"] for m in urgent} == {tg(service, on_call), -100}
+    assert {m["chat_id"] for m in urgent} == {tg(service, on_call), 2001, -100}  # on-call + Rina's supervisor
 
 
 def test_snooze_delays_nudge(service, channel):

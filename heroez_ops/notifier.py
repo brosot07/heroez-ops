@@ -62,6 +62,9 @@ class Notifier:
         if kind == "admin":
             a = self.cfg.admin(key)
             return a.telegram_id if a else 0
+        if kind == "spv":
+            s = self.cfg.supervisor(key)
+            return s.telegram_id if s else 0
         if key == "admin":
             return self.cfg.admin_group_id
         if key == "management":
@@ -73,12 +76,12 @@ class Notifier:
         """Called every minute: queue due steps, flush batches, morning list."""
         now_ts = int(now.timestamp())
         for d in self.escalator.due(now):
-            for r in d.recipients:
-                cid = self.chat_id(r)
+            for cid in dict.fromkeys(self.chat_id(r) for r in d.recipients):  # dedupe, keep order
                 if cid:
                     self.store.x("INSERT INTO outbox(chat_id,wa_id,step,created_at) VALUES(?,?,?,?)", (cid, d.wa_id, d.step, now_ts))
-                else:
-                    log.warning("no Telegram id configured for %s; alert %s/%s not queued", r, d.wa_id, d.step)
+            missing = [r for r in d.recipients if not self.chat_id(r) and not r.startswith("group:")]
+            if missing:
+                log.warning("no Telegram ID set for %s; they miss alert %s/%s", missing, d.wa_id, d.step)
             self.escalator.mark_fired(d.wa_id, d.step)
             self.store.audit("system", f"escalate:{d.step}", d.wa_id, {"recipients": list(d.recipients)}, now_ts)
         self.flush(now)
@@ -208,6 +211,9 @@ class Notifier:
         for a in self.cfg.admins:
             if a.telegram_id and a.key in mine:
                 self.channel.send(a.telegram_id, "☀️ Selamat pagi!\n\n" + self.queue_text(a.key, now))
+        for s in self.cfg.supervisors:
+            if s.telegram_id:
+                self.channel.send(s.telegram_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now))
         if self.cfg.admin_group_id:
             self.channel.send(self.cfg.admin_group_id, "☀️ Ringkasan pagi\n\n" + self.queue_text(None, now))
         self.store.audit("system", "morning_list", None, None, int(now.timestamp()))

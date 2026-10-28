@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import json
 import logging
 
 from .alerts.base import AlertChannel, Button
@@ -40,13 +41,30 @@ class Bot:
         self.cfg, self.store, self.engine, self.notifier, self.channel = cfg, store, engine, notifier, channel
 
     def _actor(self, user_id: int) -> str | None:
-        """Admin key, 'mgmt:<id>' for management, or None if not allowed."""
-        a = self.cfg.admin_by_telegram(user_id)
+        """Admin key, 'spv:<key>', 'mgmt:<id>', or None if not allowed."""
+        a = self.cfg.admin_by_telegram(user_id) if user_id else None
         if a:
             return a.key
+        s = self.cfg.supervisor_by_telegram(user_id)
+        if s:
+            return f"spv:{s.key}"
         if user_id in self.cfg.management_user_ids:
             return f"mgmt:{user_id}"
         return None
+
+    def _name(self, actor: str) -> str:
+        if self.cfg.admin(actor):
+            return self.cfg.admin(actor).name
+        if actor.startswith("spv:") and self.cfg.supervisor(actor[4:]):
+            return self.cfg.supervisor(actor[4:]).name
+        return "Manajemen"
+
+    def _remember_newcomer(self, user: dict) -> None:
+        """Keep the last few unknown /start users so the settings page can offer them."""
+        recent = [u for u in json.loads(self.store.get_kv("tg_newcomers", "[]")) if u["id"] != user.get("id")]
+        name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x) or user.get("username") or ""
+        recent.insert(0, {"id": user.get("id"), "name": name, "username": user.get("username") or ""})
+        self.store.set_kv("tg_newcomers", json.dumps(recent[:10], ensure_ascii=False))
 
     def handle_update(self, update: dict, now: dt.datetime) -> None:
         if "callback_query" in update:
@@ -67,7 +85,7 @@ class Bot:
             self.channel.answer_callback(cq.get("id", ""), "Chat tidak ditemukan.")
             return
         if action == "claim":
-            if actor.startswith("mgmt:"):
+            if not self.cfg.admin(actor):
                 self.channel.answer_callback(cq["id"], "Hanya admin yang bisa mengambil chat.")
                 return
             self.engine.claim(wa_id, actor, at)
@@ -93,7 +111,7 @@ class Bot:
         resolved = action in ("done", "nope")
         single = rows and all(b.data.endswith(":" + wa_id) for row in rows for b in row)
         if single:
-            who = self.cfg.admin(actor).name if self.cfg.admin(actor) else "Manajemen"
+            who = self._name(actor)
             note = {"claim": f"✋ Diambil {who}", "done": f"🟢 Sudah dibalas ({who})",
                     "snooze": f"⏰ Ditunda 1 jam ({who})", "nope": f"🟢 Tidak perlu dibalas ({who})"}[action]
             text = self.notifier.item_lines(wa_id, now) + "\n\n" + html.escape(note)
@@ -113,8 +131,10 @@ class Bot:
         cmd = cmd.split("@")[0].lower()
         actor = self._actor(user_id)
         if cmd == "/start" and not actor:
-            # Lets a new admin find their Telegram ID to give to whoever edits config.
-            self.channel.send(chat_id, f"Halo! ID Telegram kamu: <code>{user_id}</code>\nKirim ID ini ke pengelola sistem supaya didaftarkan.")
+            # New admin/supervisor: their ID shows up on the settings page to be added.
+            self._remember_newcomer(msg.get("from") or {})
+            self.channel.send(chat_id, f"Halo! ID Telegram kamu: <code>{user_id}</code>\n"
+                                       "Minta pengelola sistem menambahkan kamu di halaman Pengaturan Heroez Ops.")
             return
         if not actor:
             self.store.audit(str(user_id), "denied_command", None, cmd)
@@ -122,7 +142,7 @@ class Bot:
         if cmd in ("/start", "/bantuan", "/help"):
             self.channel.send(chat_id, HELP)
         elif cmd == "/antrian":
-            key = actor if not actor.startswith("mgmt:") else None
+            key = actor if self.cfg.admin(actor) else None
             self.channel.send(chat_id, self.notifier.queue_text(key, now))
         elif cmd == "/semua":
             self.channel.send(chat_id, self.notifier.queue_text(None, now))

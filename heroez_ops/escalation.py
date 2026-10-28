@@ -18,7 +18,7 @@ from .states import AWAITING_US
 class Due:
     wa_id: str
     step: str                 # nudge | group | management | urgent | overdue
-    recipients: tuple[str, ...]  # "admin:<key>" | "group:admin" | "group:management"
+    recipients: tuple[str, ...]  # "admin:<key>" | "spv:<key>" | "group:admin" | "group:management"
 
 
 def _ts(t: dt.datetime) -> int:
@@ -43,22 +43,25 @@ class Escalator:
             snoozed = c["snoozed_until"] and c["snoozed_until"] > now_ts
             assignee = c["assignee"]
             all_admins = tuple(f"admin:{a.key}" for a in self.cfg.admins)
+            own_spv = tuple(f"spv:{s.key}" for s in self.cfg.supervisors_of(assignee))
+            all_spv = tuple(f"spv:{s.key}" for s in self.cfg.supervisors)
+            me = (f"admin:{assignee}",) if assignee else ()
 
             steps: list[tuple[str, tuple[str, ...]]] = []
             if real_h >= e.overdue_after_real_hours:
-                steps.append(("overdue", all_admins + ("group:admin",)))
+                steps.append(("overdue", all_admins + own_spv + ("group:admin",)))
             elif real_h >= e.urgent_after_real_hours:
                 if self.clock.is_open(now):
-                    steps.append(("urgent", all_admins + ("group:admin",)))
+                    steps.append(("urgent", all_admins + own_spv + ("group:admin",)))
                 else:
-                    steps.append(("urgent", (f"admin:{self.clock.on_call(now)}", "group:admin")))
+                    steps.append(("urgent", (f"admin:{self.clock.on_call(now)}",) + own_spv + ("group:admin",)))
             if not snoozed:
                 if c["priority"] == "P1" and bmin >= e.alert_management_p1_after_business_min:
-                    steps.append(("management", ("group:management",)))
+                    steps.append(("management", ("group:management",) + all_spv))
                 if bmin >= e.alert_group_after_business_min:
-                    steps.append(("group", ("group:admin", f"admin:{self.cfg.supervisor}")))
+                    steps.append(("group", me + own_spv + ("group:admin",)))
                 if bmin >= e.nudge_assignee_after_business_min and assignee:
-                    steps.append(("nudge", (f"admin:{assignee}",)))
+                    steps.append(("nudge", me))
 
             for step, recipients in steps:
                 if step not in fired:

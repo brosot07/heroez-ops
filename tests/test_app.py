@@ -1,7 +1,6 @@
 """Integration: HTTP webhooks end to end (signature, durable inbox, processing)."""
 import hashlib
 import hmac
-import importlib
 import json
 
 import pytest
@@ -19,10 +18,10 @@ def client(cfg, tmp_path, monkeypatch):
     monkeypatch.setenv("META_VERIFY_TOKEN", "verifyme")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "tgsecret")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    import heroez_ops.app as appmod
-    appmod = importlib.reload(appmod)
-    with TestClient(appmod.app) as c:
-        c.mod = appmod
+    from heroez_ops.app import create_app
+    app = create_app(run_background=False)
+    with TestClient(app) as c:
+        c.service, c.store = app.state.service, app.state.store
         yield c
 
 
@@ -46,8 +45,8 @@ def test_signed_webhook_is_stored_then_processed(client):
     body = json.dumps(fixtures.inbound("628111", "Halo kak", 1_800_000_000)).encode()
     r = client.post("/webhook/meta", content=body, headers=signed(body))
     assert r.status_code == 200
-    client.mod.service.process_inbox()
-    conv = client.mod.service.engine.conversation("628111")
+    client.service.process_inbox()
+    conv = client.service.engine.conversation("628111")
     assert conv["state"] == "AWAITING_US"
 
 
@@ -58,6 +57,6 @@ def test_telegram_requires_secret(client):
 
 
 def test_health(client):
-    client.mod.store.set_kv("last_tick_at", str(__import__("time").time().__int__()))
+    client.store.set_kv("last_tick_at", str(__import__("time").time().__int__()))
     r = client.get("/health")
     assert r.status_code == 200 and r.json()["mode"] == "shadow"

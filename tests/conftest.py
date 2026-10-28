@@ -22,9 +22,11 @@ business_hours:
 whatsapp:
   business_number: "6280000000000"
 admins:
-  - {key: rina, name: Rina, telegram_id: 1001}
-  - {key: budi, name: Budi, telegram_id: 1002}
-supervisor: rina
+  - {key: rina, name: Rina, telegram_id: 1001, supervisors: [sari]}
+  - {key: budi, name: Budi, telegram_id: 1002, supervisors: [sari, tono]}
+supervisors:
+  - {key: sari, name: Sari, telegram_id: 2001}
+  - {key: tono, name: Tono, telegram_id: 2002}
 on_call_rotation: [rina, budi]
 telegram:
   admin_group_id: -100

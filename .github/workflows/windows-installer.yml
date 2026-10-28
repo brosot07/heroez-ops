@@ -1,0 +1,90 @@
+# Builds HeroezOps-Setup-<version>.exe on a Windows runner.
+# Run it from the Actions tab ("Run workflow"), or push a tag like v0.2.0.
+# The installer appears under the run's "Artifacts" (and on the Release for tags).
+name: Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g. 0.2.0)"
+        required: true
+        default: "0.2.0"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  WINSW_VERSION: v2.12.0
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r packaging/windows/requirements-build.txt pytest
+      - run: python -m pytest -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "${{ inputs.version }}" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build HeroezOps.exe
+        run: |
+          pip install -r packaging/windows/requirements-build.txt
+          pyinstaller --noconfirm packaging/windows/HeroezOps.spec
+
+      - name: Smoke test the built exe
+        shell: pwsh
+        run: |
+          $env:HEROEZ_HOME = "$env:RUNNER_TEMP\hzhome"
+          $p = Start-Process dist\HeroezOps\HeroezOps.exe -PassThru -WindowStyle Hidden
+          Start-Sleep 10
+          $r = Invoke-WebRequest http://127.0.0.1:8788/ -UseBasicParsing
+          if ($r.StatusCode -ne 200) { throw "settings page did not start" }
+          $h = Invoke-WebRequest http://127.0.0.1:8787/health -UseBasicParsing
+          if ($h.StatusCode -ne 200) { throw "service did not start" }
+          Stop-Process $p.Id
+
+      - name: Download WinSW and cloudflared
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force packaging/windows/bin | Out-Null
+          Invoke-WebRequest "https://github.com/winsw/winsw/releases/download/$env:WINSW_VERSION/WinSW-x64.exe" -OutFile packaging/windows/bin/WinSW-x64.exe
+          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile packaging/windows/bin/cloudflared.exe
+          & packaging/windows/bin/cloudflared.exe --version
+          Get-FileHash packaging/windows/bin/*.exe | Format-Table -AutoSize
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.v.outputs.version }}" packaging\windows\installer.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HeroezOps-Setup-${{ steps.v.outputs.version }}
+          path: dist/installer/*.exe
+
+      - name: Attach to release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/*.exe

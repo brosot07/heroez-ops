@@ -17,6 +17,8 @@ Not yet connected to a real number. See `docs/PHASE0_REPORT.md` for open items.
 - Batching: at most one Telegram message per recipient per 10 min. 08:30 morning list.
 - Telegram buttons ✋ ✅ ⏰ 🚫, commands `/antrian /semua /cari /bantuan`, whitelist by Telegram user ID.
 - Shadow mode (default): alerts are only written to `data/shadow_alerts.jsonl`.
+- Each admin can have their own supervisor(s), who get that admin's 2 h / 18 h / 24 h escalations.
+- Message texts erased after 90 days; daily DB backups (14 kept).
 
 ## Run locally
 ```bash
@@ -25,7 +27,12 @@ pytest
 python -m heroez_ops.replay examples/sample_day.jsonl --config examples/demo_config.yaml --until 2026-11-03T10:00:00+07:00
 ```
 
-## Deploy (when the server exists)
+## Windows installer (one always-on PC)
+See `docs/SETUP_WINDOWS.md`. The installer is built by `.github/workflows/windows-installer.yml`
+on a Windows runner (PyInstaller + WinSW service + bundled cloudflared + Inno Setup).
+Settings page: http://127.0.0.1:8788 (local only). Data: `C:\ProgramData\HeroezOps`.
+
+## Deploy on a Linux server (alternative)
 ```bash
 cp .env.example .env   # fill in secrets
 docker compose -f deploy/docker-compose.yml up -d --build

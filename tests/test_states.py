@@ -98,3 +98,21 @@ def test_history_backfill_sets_states(service):
     assert state(service, "628111") == AWAITING_THEM
     assert state(service, "628222") == AWAITING_US
     assert service.store.one("SELECT kind FROM contacts WHERE wa_id='628111'")["kind"] == "existing_client"
+
+
+def test_retention_erases_old_texts_and_backs_up(cfg, tmp_path):
+    import datetime as dt
+
+    from heroez_ops.alerts.telegram import ShadowAlertChannel
+    from heroez_ops.db import Store
+    from heroez_ops.service import Service
+    ch = ShadowAlertChannel(tmp_path / "s.jsonl")
+    svc = Service(cfg, Store(tmp_path / "db.sqlite"), alert_channel=ch, reply_channel=ch, data_dir=tmp_path / "data")
+    now = wib(2026, 11, 2, 4, 0)
+    svc.process_payload(fixtures.inbound("628111", "pesan lama", ts(now) - 100 * 86400))
+    svc.process_payload(fixtures.inbound("628222", "pesan baru", ts(now) - 86400))
+    svc.daily_maintenance(now)
+    texts = {r["wa_id"]: r["text"] for r in svc.store.q("SELECT wa_id, text FROM messages")}
+    assert texts == {"628111": None, "628222": "pesan baru"}
+    assert svc.engine.conversation("628111") is not None          # state kept
+    assert (tmp_path / "data" / "backups" / "heroez-2026-11-02.db").exists()

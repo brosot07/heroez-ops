@@ -25,13 +25,14 @@ class TelegramAlertChannel(AlertChannel):
         self.base = f"https://api.telegram.org/bot{token}"
         self.http = client or httpx.Client(timeout=15)
 
-    def _call(self, method: str, payload: dict) -> dict | None:
+    def _call(self, method: str, payload: dict, timeout: float | None = None) -> dict | list | None:
         payload = {k: v for k, v in payload.items() if v is not None}
         try:
-            r = self.http.post(f"{self.base}/{method}", json=payload)
+            r = self.http.post(f"{self.base}/{method}", json=payload, timeout=timeout or 15)
             data = r.json()
-        except (httpx.HTTPError, ValueError):
-            log.exception("telegram %s failed", method)
+        except (httpx.HTTPError, ValueError) as e:
+            # Don't log the exception text: it contains the URL, which contains the bot token.
+            log.error("telegram %s failed: %s", method, type(e).__name__)
             return None
         if not data.get("ok"):
             log.error("telegram %s error: %s", method, data.get("description"))
@@ -58,6 +59,18 @@ class TelegramAlertChannel(AlertChannel):
 
     def answer_callback(self, callback_id, text):
         self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
+
+    def get_me(self) -> dict | None:
+        return self._call("getMe", {})
+
+    def get_updates(self, offset: int, wait_seconds: int = 25) -> list[dict]:
+        """Long polling: no public address needed. Returns [] on errors."""
+        res = self._call("getUpdates", {"offset": offset, "timeout": wait_seconds,
+                                        "allowed_updates": ["message", "callback_query"]}, timeout=wait_seconds + 10)
+        return res if isinstance(res, list) else []
+
+    def delete_webhook(self) -> None:
+        self._call("deleteWebhook", {})
 
     def set_webhook(self, url: str, secret: str) -> dict | None:
         return self._call("setWebhook", {"url": url, "secret_token": secret, "allowed_updates": ["message", "callback_query"]})

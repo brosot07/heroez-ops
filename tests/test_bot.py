@@ -65,3 +65,16 @@ def test_single_alert_is_updated_after_resolve(service, channel):
     press(service, 1001, "done:628111", message=msg)
     edit = [r for r in channel.sent if r["op"] == "edit"][-1]
     assert "Sudah dibalas (Rina)" in edit["text"]
+
+
+def test_supervisor_can_resolve_but_not_claim(service, channel):
+    setup_chat(service)
+    press(service, 2001, "claim:628111")
+    assert service.engine.conversation("628111")["assigned_how"] != "claim"
+    press(service, 2001, "done:628111")
+    assert service.engine.conversation("628111")["state"] == AWAITING_THEM
+
+
+def test_newcomer_start_is_remembered(service, channel):
+    service.bot.handle_update({"message": {"from": {"id": 777, "first_name": "Dina"}, "chat": {"id": 777}, "text": "/start"}}, NOW)
+    assert '"id": 777' in service.store.get_kv("tg_newcomers")

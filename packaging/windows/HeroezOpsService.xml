@@ -1,0 +1,19 @@
+<!-- WinSW service definition. The installer copies WinSW-x64.exe next to this file
+     as HeroezOpsService.exe; "HeroezOpsService.exe install|start|stop|uninstall". -->
+<service>
+  <id>HeroezOps</id>
+  <name>Heroez Ops</name>
+  <description>Pengingat chat WhatsApp Heroez lewat Telegram. Pengaturan: http://127.0.0.1:8788</description>
+  <executable>%BASE%\HeroezOps.exe</executable>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>20 sec</stoptimeout>
+  <logpath>%ProgramData%\HeroezOps\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>5120</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+</service>

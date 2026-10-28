@@ -134,6 +134,16 @@ class Store:
         """Context manager for a transaction: `with store.tx(): ...`."""
         return _Tx(self)
 
+    def backup(self, dest: str | Path) -> None:
+        """Consistent online copy of the database (safe while the service runs)."""
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(dest))
+        try:
+            with self.lock:
+                self.conn.backup(target)
+        finally:
+            target.close()
+
     # -- kv / audit ------------------------------------------------------
     def get_kv(self, key: str, default: str | None = None) -> str | None:
         row = self.one("SELECT value FROM kv WHERE key=?", (key,))
