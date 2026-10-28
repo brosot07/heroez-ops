@@ -133,6 +133,36 @@ def import_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[i
     return len(talents), problems
 
 
+def merge_roster(store: Store, rows: list[dict[str, str]], who: str) -> tuple[int, int, list[str]]:
+    """Add or update KOLs by name, keeping existing phone/handler/calendar when the new row lacks them.
+    Returns (added, updated, problems)."""
+    import tempfile
+    tmp = Store(":memory:")
+    n, problems = import_roster(tmp, rows, who)
+    existing = {r["name"].strip().lower(): r for r in store.q("SELECT * FROM talents")}
+    added = updated = 0
+    with store.tx():
+        for t in tmp.q("SELECT * FROM talents"):
+            old = existing.get(t["name"].strip().lower())
+            new = json.loads(t["data"])
+            if old:
+                od = json.loads(old["data"])
+                od["info"].update(new["info"])
+                od["rates"] = new["rates"] or od["rates"]
+                if new.get("type"):
+                    od["type"] = new["type"]
+                store.x("UPDATE talents SET data=?, phone=COALESCE(NULLIF(?, ''), phone), handler=COALESCE(NULLIF(?, ''), handler), "
+                        "calendar_url=COALESCE(NULLIF(?, ''), calendar_url), updated_at=? WHERE id=?",
+                        (json.dumps(od, ensure_ascii=False), t["phone"], t["handler"], t["calendar_url"], int(time.time()), old["id"]))
+                updated += 1
+            else:
+                store.x("INSERT INTO talents(name,data,phone,handler,calendar_url,updated_at) VALUES(?,?,?,?,?,?)",
+                        (t["name"], t["data"], t["phone"], t["handler"], t["calendar_url"], int(time.time())))
+                added += 1
+    store.audit(who, "talents_merge", None, {"added": added, "updated": updated})
+    return added, updated, problems
+
+
 def import_availability(store: Store, rows: list[dict[str, str]], who: str) -> tuple[int, list[str]]:
     """Replace booked periods. Only talent name, start and end are read and stored."""
     problems = []

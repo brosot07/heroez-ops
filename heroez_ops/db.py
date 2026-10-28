@@ -193,6 +193,17 @@ CREATE TABLE IF NOT EXISTS message_links (
     reasons TEXT,
     PRIMARY KEY (msg_id, shown)
 );
+CREATE TABLE IF NOT EXISTS doc_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    status TEXT NOT NULL,                    -- reading | review | approved | failed | cancelled
+    result TEXT,                             -- {"talents": [...], "document_notes": [...]}
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    created_by TEXT,
+    decided_at INTEGER,
+    decided_by TEXT
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

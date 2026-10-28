@@ -88,6 +88,32 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                f'<p class="muted">Excel/CSV dengan kolom <b>Nama</b>, <b>Mulai</b>, <b>Selesai</b> untuk tanggal talent <b>tidak tersedia</b>. '
                f'Kolom lain (brand, pekerjaan, catatan) diabaikan dan tidak disimpan, jadi bot hanya bisa bilang '
                f'“tersedia / tidak tersedia”, tanpa alasan.</p>{upload("/pengetahuan/jadwal", "Upload jadwal", ".xlsx,.csv")}</div>')
+        sheet_url = kb.get("sheet_url", "") or ""
+        sheet_st = json.loads(ui.store.get_kv("sheet_status", "{}") or "{}")
+        if sheet_st:
+            when = time.strftime("%d/%m %H:%M", time.localtime(sheet_st["at"]))
+            sheet_line = (f'Terakhir sinkron {when}: {sheet_st["kol"]} KOL, {sheet_st["jadwal"]} periode jadwal, {sheet_st["faq"]} FAQ'
+                          + (f' · tab: {e(", ".join(sheet_st.get("tabs", [])))}' if sheet_st.get("tabs") else "")
+                          + "".join(f"<br>⚠️ {e(x)}" for x in sheet_st.get("errors", [])))
+        else:
+            sheet_line = "Belum pernah sinkron."
+        sheet = (f'<div class="card"><h2>Google Sheet (sumber utama, sinkron tiap jam)</h2>'
+                 f'<p class="muted">Satu Google Sheet dengan tab <b>KOL</b> (kolom seperti upload), <b>Jadwal</b> (Nama, Mulai, Selesai) '
+                 f'dan <b>FAQ</b> (Pertanyaan, Jawaban, Jawaban EN, Otomatis). Bagikan sebagai “siapa saja dengan link bisa melihat”, '
+                 f'lalu tempel link-nya di sini. Selama link ini terisi, sheet mengganti upload manual.</p>'
+                 f'<p>{sheet_line}</p>'
+                 f'<form method="post" action="/pengetahuan/sheet">{csrf}<label>Link Google Sheet</label>'
+                 f'<input type="text" name="url" value="{e(sheet_url)}" placeholder="https://docs.google.com/spreadsheets/d/…/edit" {dis}>'
+                 f'<br><br><button type="submit" {dis}>Simpan & sinkron sekarang</button></form></div>')
+        imports = ui.store.q("SELECT * FROM doc_imports WHERE status IN ('reading','review','failed') ORDER BY id DESC LIMIT 10")
+        imp_rows = "".join(f'<tr><td><a href="/pengetahuan/dokumen/{d["id"]}">{e(d["filename"])}</a></td>'
+                           f'<td>{ {"reading": "⏳ AI sedang membaca", "review": "🟠 Perlu dicek", "failed": "🔴 Gagal"}.get(d["status"], d["status"]) }</td></tr>'
+                           for d in imports) or '<tr><td colspan="2" class="muted">Tidak ada dokumen yang menunggu.</td></tr>'
+        docs = (f'<div class="card"><h2>Baca dokumen dengan AI (deck KOL, rate card, profil)</h2>'
+                f'<p class="muted">PowerPoint (.pptx), PDF, Word, Excel atau gambar. AI menyalin nama, handle, followers, niche dan harga '
+                f'ke tabel; kamu memeriksa dan menyetujui sebelum masuk ke daftar KOL. Tidak ada yang terkirim ke klien dari langkah ini.</p>'
+                f'{upload("/pengetahuan/dokumen", "Upload & baca", ".pptx,.pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.webp")}'
+                f'<table style="margin-top:12px"><tr><th>Dokumen</th><th>Status</th></tr>{imp_rows}</table></div>')
         cal_status = json.loads(ui.store.get_kv("calendar_status", "{}") or "{}")
         urls = kb.get("calendar_urls", []) or []
         n_own = ui.store.one("SELECT COUNT(*) n FROM talents WHERE calendar_url LIKE 'http%'")["n"]
@@ -143,7 +169,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                 f'<div class="card"><h2>Kalimat bot</h2><p class="muted">Dikirim bot apa adanya. {{sla}} diganti dengan janji waktu balas '
                 f'dari Pengaturan; {{names}} dengan nama talent.</p>{texts_html}</div>'
                 f'<button type="submit" {dis}>Simpan</button></form>')
-        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{kol}{gcal}{cal}{rc}{faq}{rest}'
+        return f'<h1>Pengetahuan</h1><div class="card"><h2>Status bot</h2>{status}</div>{sheet}{kol}{docs}{gcal}{cal}{rc}{faq}{rest}'
 
     @r.get("/pengetahuan/contoh.xlsx")
     async def example(request: Request):
@@ -212,6 +238,134 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         ok = not st["errors"]
         return back(f"Sinkron: {st['events']} acara, {st['matched']} cocok dengan talent." +
                     (" " + "; ".join(st["errors"][:3]) if st["errors"] else ""), ok)
+
+    @r.post("/pengetahuan/sheet")
+    async def sheet(request: Request):
+        user = await who(request)
+        manager(user)
+        f = await form(request)
+        url = str(f.get("url", "")).strip()
+        from . import sheet_sync
+        if url and not sheet_sync.export_url(url):
+            return back("Link harus link Google Sheet (docs.google.com/spreadsheets/d/…).", False)
+        kb.set("sheet_url", url, user.key)
+        if not url:
+            return back("Link Google Sheet dihapus; upload manual berlaku lagi.")
+        from starlette.concurrency import run_in_threadpool
+        st = await run_in_threadpool(sheet_sync.sync, ui.store)
+        return back(f"Sinkron: {st['kol']} KOL, {st['jadwal']} jadwal, {st['faq']} FAQ." +
+                    (" " + "; ".join(st["errors"][:3]) if st["errors"] else ""), st["ok"] and not st["errors"])
+
+    @r.post("/pengetahuan/dokumen")
+    async def doc_upload(request: Request):
+        user = await who(request)
+        manager(user)
+        data, name = await upload(request)
+        from . import doc_import
+        try:
+            blocks = doc_import.extract(data, name)
+        except (doc_import.ImportError_, UnsafeFile) as ex:
+            return back(str(ex), False)
+        did = ui.store.x("INSERT INTO doc_imports(filename,status,created_at,created_by) VALUES(?,?,?,?)",
+                         (name[:120], "reading", int(time.time()), user.key)).lastrowid
+        ui.store.audit(user.key, "doc_import_start", None, {"id": did, "file": name[:120]})
+        key = ui.cfg().anthropic_api_key
+
+        def run():
+            try:
+                if not key:
+                    raise doc_import.ImportError_("Claude API key belum diisi di Pengaturan.")
+                result = ui.doc_analyzer(blocks, key, ui.store)
+                ui.store.x("UPDATE doc_imports SET status='review', result=? WHERE id=?",
+                           (json.dumps(result, ensure_ascii=False), did))
+            except Exception as ex:
+                ui.store.x("UPDATE doc_imports SET status='failed', error=? WHERE id=?", (str(ex)[:300], did))
+        import threading
+        threading.Thread(target=run, name=f"doc-import-{did}", daemon=True).start()
+        return RedirectResponse(f"/pengetahuan/dokumen/{did}", status_code=303)
+
+    def doc_page(d, user) -> str:
+        from . import doc_import
+        if d["status"] == "reading":
+            return ('<meta http-equiv="refresh" content="5"><h1>⏳ AI sedang membaca dokumen…</h1>'
+                    '<p class="muted">Biasanya 1–3 menit. Halaman ini memuat ulang sendiri.</p>')
+        if d["status"] == "failed":
+            return f'<h1>{e(d["filename"])}</h1><div class="msg bad">Gagal: {e(d["error"])}</div><p><a href="/pengetahuan">Kembali</a></p>'
+        if d["status"] != "review":
+            return f'<h1>{e(d["filename"])}</h1><p>Sudah {e(d["status"])}.</p><p><a href="/pengetahuan">Kembali</a></p>'
+        res = json.loads(d["result"] or "{}")
+        can = user.can_manage_templates
+        dis = "" if can else "disabled"
+        types = {"": "(tidak disebut)", "eksklusif": "Eksklusif", "non-eksklusif": "Non-eksklusif", "nano": "Nano"}
+        rows = ""
+        for i, t in enumerate(res.get("talents", [])):
+            rates = "\n".join(f"{r['label']} = {r['amount_idr']}" + (" (mulai dari)" if r.get("from_price") else "") for r in t["rates"])
+            opts = "".join(f'<option value="{k}" {"selected" if k == t.get("type", "") else ""}>{v}</option>' for k, v in types.items())
+            rows += (f'<tr><td><input type="checkbox" name="keep_{i}" checked {dis}></td>'
+                     f'<td><input type="text" name="name_{i}" value="{e(t["name"])}" {dis}><br><small>{e(t.get("notes", ""))}</small></td>'
+                     f'<td><textarea name="handles_{i}" rows="2" {dis}>{e(chr(10).join(t.get("handles", [])))}</textarea></td>'
+                     f'<td><textarea name="followers_{i}" rows="2" {dis}>{e(chr(10).join(t.get("followers", [])))}</textarea></td>'
+                     f'<td><input type="text" name="niche_{i}" value="{e(t.get("niche", ""))}" {dis}><select name="type_{i}" {dis}>{opts}</select></td>'
+                     f'<td><textarea name="rates_{i}" rows="3" placeholder="IG Reels = 15000000" {dis}>{e(rates)}</textarea></td></tr>')
+        notes = "".join(f"<li>{e(n)}</li>" for n in res.get("document_notes", []))
+        existing = {r["name"].strip().lower() for r in ui.store.q("SELECT name FROM talents")}
+        dup = [t["name"] for t in res.get("talents", []) if t["name"].strip().lower() in existing]
+        info = (f'<p class="muted">{len(res.get("talents", []))} KOL ditemukan; {len(dup)} sudah ada di daftar dan akan diperbarui '
+                f'({e(", ".join(dup[:5]))}{"…" if len(dup) > 5 else ""}).</p>' if dup else
+                f'<p class="muted">{len(res.get("talents", []))} KOL ditemukan.</p>')
+        return (f'<h1>{e(d["filename"])}</h1>{info}'
+                f'{"<div class=card><b>Catatan dari dokumen</b><ul>" + notes + "</ul></div>" if notes else ""}'
+                f'<form method="post" action="/pengetahuan/dokumen/{d["id"]}/setujui"><input type="hidden" name="csrf" value="{ui.csrf}">'
+                f'<div class="card scroll"><p class="muted">Periksa angka dengan dokumen aslinya. Harga ditulis “label = angka rupiah”, satu per baris.</p>'
+                f'<table><tr><th>Pakai</th><th>Nama</th><th>Handle</th><th>Followers</th><th>Niche · Tipe</th><th>Rate</th></tr>{rows}</table></div>'
+                f'{"<button type=submit>✅ Setujui & masukkan ke daftar KOL</button> " if can else ""}</form>'
+                f'<form method="post" action="/pengetahuan/dokumen/{d["id"]}/batal" style="display:inline"><input type="hidden" name="csrf" value="{ui.csrf}">'
+                f'<button class="danger" type="submit" {dis}>Buang</button></form>')
+
+    @r.get("/pengetahuan/dokumen/{did}", response_class=HTMLResponse)
+    async def doc_review(did: int, request: Request):
+        user = await who(request)
+        d = ui.store.one("SELECT * FROM doc_imports WHERE id=?", (did,))
+        if not d:
+            raise HTTPException(404)
+        return show("Dokumen", doc_page(d, user), user, "/pengetahuan")
+
+    @r.post("/pengetahuan/dokumen/{did}/setujui")
+    async def doc_approve(did: int, request: Request):
+        user = await who(request)
+        manager(user)
+        f = await form(request)
+        d = ui.store.one("SELECT * FROM doc_imports WHERE id=? AND status='review'", (did,))
+        if not d:
+            raise HTTPException(404)
+        talents, i = [], 0
+        while f"name_{i}" in f:
+            if f.get(f"keep_{i}") and str(f.get(f"name_{i}", "")).strip():
+                rates = []
+                for line in str(f.get(f"rates_{i}", "")).splitlines():
+                    label, sep, amt = line.partition("=")
+                    digits = "".join(ch for ch in amt if ch.isdigit())
+                    if sep and label.strip() and digits:
+                        rates.append({"label": label.replace("(mulai dari)", "").strip(), "amount_idr": int(digits),
+                                      "from_price": "mulai dari" in line.lower()})
+                talents.append({"name": str(f.get(f"name_{i}")).strip(), "niche": str(f.get(f"niche_{i}", "")).strip(),
+                                "type": str(f.get(f"type_{i}", "")), "rates": rates,
+                                "handles": [h.strip() for h in str(f.get(f"handles_{i}", "")).splitlines() if h.strip()],
+                                "followers": [h.strip() for h in str(f.get(f"followers_{i}", "")).splitlines() if h.strip()]})
+            i += 1
+        from . import doc_import
+        added, updated, problems = tl.merge_roster(ui.store, doc_import.to_roster_rows(talents), user.key)
+        ui.store.x("UPDATE doc_imports SET status='approved', decided_at=?, decided_by=? WHERE id=?", (int(time.time()), user.key, did))
+        ui.store.audit(user.key, "doc_import_approve", None, {"id": did, "added": added, "updated": updated})
+        return back(f"{added} KOL baru, {updated} diperbarui dari {d['filename']}." + (" " + "; ".join(problems[:3]) if problems else ""))
+
+    @r.post("/pengetahuan/dokumen/{did}/batal")
+    async def doc_cancel(did: int, request: Request):
+        user = await who(request)
+        manager(user)
+        await form(request)
+        ui.store.x("UPDATE doc_imports SET status='cancelled', decided_at=?, decided_by=? WHERE id=?", (int(time.time()), user.key, did))
+        return back("Dokumen dibuang; daftar KOL tidak berubah.")
 
     @r.post("/pengetahuan/ratecard")
     async def ratecard_upload(request: Request):

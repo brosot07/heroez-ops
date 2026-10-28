@@ -58,6 +58,8 @@ class ContractsUI:
         self.cdir = home / "data" / "contracts"
         self._csrf_secret = pysecrets.token_bytes(32)
         self.analyzer = analyzer or (lambda data, key: contract_ai.analyze(data, key))
+        from . import doc_import
+        self.doc_analyzer = doc_import.analyze     # (blocks, api_key, store) -> table; tests replace it
         self._verifier: tuple[tuple[str, str], AccessVerifier] | None = None
 
     # -- CSRF: one token per user (and per owner session), never shared across users ---
