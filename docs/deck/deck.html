@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Asisten Heroez – Panduan Tim</title>
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  :root {
+    --ink: #14182b; --muted: #5b6275; --line: #e3e5ec; --bg: #ffffff; --soft: #f5f6fa;
+    --navy: #161b33; --amber: #f5a524; --amber-soft: #fff4dd; --green: #1f9d63; --green-soft: #e3f6ec;
+    --red: #d64545; --red-soft: #fde8e8; --blue: #3366e6; --blue-soft: #e7eeff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #888; font-family: Inter, "Noto Color Emoji", sans-serif; color: var(--ink); }
+  .s { width: 1280px; height: 720px; background: var(--bg); position: relative; overflow: hidden;
+       page-break-after: always; padding: 64px 80px 56px; display: flex; flex-direction: column; }
+  .s:last-child { page-break-after: auto; }
+  .kicker { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); margin-bottom: 10px; }
+  h1 { font-family: "Inter Display", Inter, sans-serif; font-size: 44px; line-height: 1.12; margin: 0 0 14px; font-weight: 700; letter-spacing: -.01em; }
+  h2 { font-size: 22px; margin: 0 0 8px; font-weight: 650; }
+  p, li { font-size: 20px; line-height: 1.45; color: var(--ink); }
+  p { margin: 0 0 12px; }
+  .lead { font-size: 23px; color: var(--muted); max-width: 980px; }
+  .muted { color: var(--muted); }
+  ul { margin: 0; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  .foot { position: absolute; left: 80px; right: 80px; bottom: 26px; display: flex; justify-content: space-between;
+          font-size: 13px; color: #9aa0b1; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; flex: 1; margin-top: 20px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 22px; margin-top: 22px; }
+  .card { background: var(--soft); border-radius: 16px; padding: 24px 26px; }
+  .card p, .card li { font-size: 18px; }
+  .card h2 { font-size: 21px; }
+  .ok { background: var(--green-soft); } .no { background: var(--red-soft); } .warn { background: var(--amber-soft); } .info { background: var(--blue-soft); }
+  .big-emoji { font-size: 40px; line-height: 1; margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 18px; }
+  td, th { text-align: left; padding: 11px 14px; font-size: 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  td.k { font-weight: 650; white-space: nowrap; }
+  .pill { display: inline-block; font-size: 15px; font-weight: 600; padding: 4px 12px; border-radius: 999px; background: var(--soft); margin: 0 6px 6px 0; }
+  .btn { display: inline-block; font-size: 17px; font-weight: 600; padding: 7px 14px; border-radius: 10px; background: #fff;
+         border: 1.5px solid #cdd2de; white-space: nowrap; }
+  code { font-family: "JetBrains Mono", monospace; font-size: .9em; background: var(--soft); padding: 2px 7px; border-radius: 6px; }
+  /* dark slides */
+  .dark { background: var(--navy); color: #fff; }
+  .dark p, .dark li { color: #e6e8f2; }
+  .dark .muted, .dark .lead { color: #aab0c6; }
+  .dark .foot { color: #6d7391; }
+  /* telegram mock */
+  .tg { background: #fff; border-radius: 14px; box-shadow: 0 6px 24px rgba(20,24,43,.12); padding: 18px 20px; font-size: 17px; line-height: 1.45; }
+  .tg .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .tg .row span { flex: 1; text-align: center; background: #eef3fb; color: #2a5db0; border-radius: 8px; padding: 8px 6px; font-weight: 600; font-size: 15px; }
+  .num { display: inline-flex; width: 34px; height: 34px; border-radius: 50%; background: var(--amber); color: var(--navy);
+         align-items: center; justify-content: center; font-weight: 700; font-size: 17px; margin-right: 12px; flex: none; }
+  .step { display: flex; align-items: flex-start; margin-bottom: 16px; }
+  .step p { margin: 3px 0 0; }
+</style>
+</head>
+<body>
+
+<!-- 1 Cover -->
+<section class="s dark" style="justify-content:center">
+  <div class="kicker">Heroez · Panduan untuk tim</div>
+  <h1 style="font-size:64px;max-width:900px">Asisten Heroez</h1>
+  <p class="lead" style="font-size:26px;max-width:860px">Tidak ada lagi chat klien yang terlewat. Pengingat di Telegram, bot yang menyambut brand baru,
+    dan pencatatan deal &amp; kontrak dalam satu sistem.</p>
+  <div style="margin-top:36px;display:flex;gap:10px;flex-wrap:wrap">
+    <span class="pill" style="background:#262c4a;color:#fff">🔔 Pengingat chat</span>
+    <span class="pill" style="background:#262c4a;color:#fff">🤖 Bot brand baru</span>
+    <span class="pill" style="background:#262c4a;color:#fff">⏰ Janji ke klien</span>
+    <span class="pill" style="background:#262c4a;color:#fff">🤝 Pipeline deal</span>
+    <span class="pill" style="background:#262c4a;color:#fff">📄 Kontrak</span>
+  </div>
+  <div class="foot"><span>Untuk admin &amp; supervisor</span><span>Versi 0.8</span></div>
+</section>
+
+<!-- 2 Why / what changes -->
+<section class="s">
+  <div class="kicker">Kenapa ada sistem ini</div>
+  <h1>Kerja kamu tetap sama. Yang baru: ada yang mengingatkan.</h1>
+  <div class="grid2" style="flex:none">
+    <div class="card ok">
+      <div class="big-emoji">✅</div>
+      <h2>Tidak berubah</h2>
+      <ul>
+        <li>Tetap balas klien &amp; talent di <b>WhatsApp</b> seperti biasa</li>
+        <li>Nomor WhatsApp Heroez tetap sama</li>
+        <li>Grup WhatsApp tetap jalan</li>
+        <li>Kalau sistem mati, WhatsApp tetap normal</li>
+      </ul>
+    </div>
+    <div class="card info">
+      <div class="big-emoji">✨</div>
+      <h2>Yang baru</h2>
+      <ul>
+        <li><b>Bot Telegram</b> mengingatkan chat yang belum dibalas</li>
+        <li><b>Bot WhatsApp</b> menyambut brand baru lalu menyerahkannya ke kamu</li>
+        <li>Janji ke klien ("besok saya kirim") diingatkan</li>
+        <li>Deal &amp; kontrak tercatat rapi, masuk ke Google Sheet ops</li>
+      </ul>
+    </div>
+  </div>
+  <div class="foot"><span>Asisten Heroez</span><span>2</span></div>
+</section>
+
+<!-- 3 Golden rule -->
+<section class="s">
+  <div class="kicker" style="color:var(--red)">Aturan paling penting</div>
+  <h1>Balas dari HP atau WhatsApp Web.<br>Jangan dari aplikasi WhatsApp Windows.</h1>
+  <div class="grid2" style="flex:none">
+    <div class="card ok">
+      <h2>Boleh ✅</h2>
+      <ul>
+        <li>WhatsApp Business di <b>HP</b></li>
+        <li><b>web.whatsapp.com</b> di Chrome / Edge</li>
+      </ul>
+    </div>
+    <div class="card no">
+      <h2>Jangan ❌</h2>
+      <ul>
+        <li>Aplikasi <b>WhatsApp untuk Windows</b> (yang di-install di laptop)</li>
+      </ul>
+    </div>
+  </div>
+  <p class="lead" style="margin-top:28px">Kenapa? Balasan dari aplikasi Windows <b>tidak terlihat</b> oleh sistem. Kamu akan terus diingatkan
+    untuk chat yang sebenarnya sudah dibalas.</p>
+  <div class="foot"><span>Asisten Heroez</span><span>3</span></div>
+</section>
+
+<!-- 4 Flow of a chat -->
+<section class="s">
+  <div class="kicker">Alur sebuah chat</div>
+  <h1>Dari pesan masuk sampai selesai</h1>
+  <svg viewBox="0 0 1120 300" width="1120" height="300" style="margin-top:28px" font-family="Inter" font-size="17">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0b1"/></marker></defs>
+    <g>
+      <rect x="0" y="40" width="190" height="110" rx="16" fill="#f5f6fa"/>
+      <text x="95" y="80" text-anchor="middle" font-size="30">💬</text>
+      <text x="95" y="112" text-anchor="middle" font-weight="650">Klien kirim</text>
+      <text x="95" y="134" text-anchor="middle" fill="#5b6275" font-size="15">pesan di WhatsApp</text>
+    </g>
+    <line x1="196" y1="95" x2="236" y2="95" stroke="#9aa0b1" stroke-width="2" marker-end="url(#a)"/>
+    <g>
+      <rect x="242" y="40" width="200" height="110" rx="16" fill="#e7eeff"/>
+      <text x="342" y="80" text-anchor="middle" font-size="30">🤖</text>
+      <text x="342" y="112" text-anchor="middle" font-weight="650">AI membaca</text>
+      <text x="342" y="134" text-anchor="middle" fill="#5b6275" font-size="15">perlu dibalas atau tidak?</text>
+    </g>
+    <line x1="448" y1="95" x2="488" y2="95" stroke="#9aa0b1" stroke-width="2" marker-end="url(#a)"/>
+    <g>
+      <rect x="494" y="40" width="200" height="110" rx="16" fill="#fff4dd"/>
+      <text x="594" y="80" text-anchor="middle" font-size="30">⏳</text>
+      <text x="594" y="112" text-anchor="middle" font-weight="650">Menunggu kita</text>
+      <text x="594" y="134" text-anchor="middle" fill="#5b6275" font-size="15">dipegang 1 admin</text>
+    </g>
+    <line x1="700" y1="95" x2="740" y2="95" stroke="#9aa0b1" stroke-width="2" marker-end="url(#a)"/>
+    <g>
+      <rect x="746" y="40" width="170" height="110" rx="16" fill="#fde8e8"/>
+      <text x="831" y="80" text-anchor="middle" font-size="30">🔔</text>
+      <text x="831" y="112" text-anchor="middle" font-weight="650">Pengingat</text>
+      <text x="831" y="134" text-anchor="middle" fill="#5b6275" font-size="15">di Telegram</text>
+    </g>
+    <line x1="922" y1="95" x2="962" y2="95" stroke="#9aa0b1" stroke-width="2" marker-end="url(#a)"/>
+    <g>
+      <rect x="968" y="40" width="150" height="110" rx="16" fill="#e3f6ec"/>
+      <text x="1043" y="80" text-anchor="middle" font-size="30">✅</text>
+      <text x="1043" y="112" text-anchor="middle" font-weight="650">Kamu balas</text>
+      <text x="1043" y="134" text-anchor="middle" fill="#5b6275" font-size="15">otomatis selesai</text>
+    </g>
+    <path d="M342,156 C342,240 342,250 420,250 L560,250" fill="none" stroke="#9aa0b1" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#a)"/>
+    <text x="570" y="245" fill="#5b6275" font-size="16">"Oke kak, makasih 🙏" → tidak perlu dibalas, tidak ada pengingat</text>
+  </svg>
+  <p class="lead" style="margin-top:6px">Begitu kamu membalas, sistem melihatnya sendiri dan pengingat berhenti. Tidak perlu menekan apa pun.</p>
+  <div class="foot"><span>Asisten Heroez</span><span>4</span></div>
+</section>
+
+<!-- 5 Escalation ladder -->
+<section class="s">
+  <div class="kicker">Notifikasi</div>
+  <h1>Kapan kamu diingatkan</h1>
+  <table>
+    <tr><th style="width:240px">Belum dibalas</th><th>Yang terjadi</th></tr>
+    <tr><td class="k">🟠 30 menit kerja</td><td>Pesan ke kamu (admin yang pegang chat)</td></tr>
+    <tr><td class="k">🔁 Tiap jam</td><td>Diingatkan lagi selama belum dibalas</td></tr>
+    <tr><td class="k">🟠 2 jam kerja</td><td>Ikut dikirim ke grup admin dan supervisor kamu</td></tr>
+    <tr><td class="k">🔴 18 jam</td><td><b>URGENT</b>: klien hampir sehari menunggu (dikirim kapan saja, juga malam)</td></tr>
+    <tr><td class="k">🔴 24 jam</td><td>Lewat sehari. Balas secepatnya.</td></tr>
+  </table>
+  <div class="grid3" style="margin-top:26px">
+    <div class="card"><h2>🕤 09:30–21:00</h2><p>Jam notifikasi setiap hari. Pesan yang masuk malam diingatkan besok pagi.</p></div>
+    <div class="card"><h2>🏖️ Sabtu, Minggu, tanggal merah</h2><p>Paling banyak 1 notifikasi per 6 jam.</p></div>
+    <div class="card"><h2>☀️ 09:30</h2><p>Daftar pagi: semua chat yang masih menunggu, yang paling lama di atas.</p></div>
+  </div>
+  <div class="foot"><span>Jam kerja Senin–Jumat 09:30–18:30 WIB · paling banyak 1 pesan per jam, chat dikumpulkan jadi satu daftar</span><span>5</span></div>
+</section>
+
+<!-- 6 Buttons -->
+<section class="s">
+  <div class="kicker">Telegram</div>
+  <h1>Satu notifikasi, tiga tombol</h1>
+  <div class="grid2" style="grid-template-columns: 1.05fr 1fr; align-items:start">
+    <div class="tg">
+      🟠 <b>Belum dibalas</b> · 45 menit<br>
+      <b>Glowskin Official</b> · 0812-3456-xxxx<br>
+      💬 “Kak, untuk rate Dewi TikTok 2 video berapa ya?”<br>
+      🤖 Brand tanya rate Dewi untuk 2 video TikTok<br>
+      💡 Saran: “Halo kak! Untuk Dewi, TikTok Rp12.000.000 per video…”<br>
+      <span style="color:#2a5db0">Buka chat</span>
+      <div class="row"><span>✋ Saya ambil</span><span>✅ Sudah dibalas</span><span>⏰ Tunda 1 jam</span></div>
+    </div>
+    <div>
+      <div class="step"><span class="btn">✋ Saya ambil</span><p style="margin-left:14px">Chat ini kamu yang pegang. Pesan berikutnya dari kontak ini juga ke kamu.</p></div>
+      <div class="step"><span class="btn">✅ Sudah dibalas</span><p style="margin-left:14px">Sudah dibalas tapi sistem belum tahu (misalnya lewat telepon).</p></div>
+      <div class="step"><span class="btn">⏰ Tunda 1 jam</span><p style="margin-left:14px">Masih menunggu info internal. Diingatkan lagi 1 jam.</p></div>
+      <p class="muted" style="font-size:17px;margin-top:10px">🤖 = ringkasan dari AI · 💡 = usulan balasan. Salin ke WhatsApp kalau cocok, boleh diubah dulu.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Pakai tombol ✅ dengan jujur: sistem belajar dari situ 🙏</span><span>6</span></div>
+</section>
+
+<!-- 7 Brand bot -->
+<section class="s">
+  <div class="kicker">Bot WhatsApp</div>
+  <h1>Bot menyambut brand baru, lalu menyerahkannya ke kamu</h1>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:36px;margin-top:22px">
+    <div>
+      <div class="step"><span class="num">1</span><p><b>Saring spam</b>: spam tidak dibalas, masuk daftar harian.</p></div>
+      <div class="step"><span class="num">2</span><p><b>Tanya kebutuhan</b>: brand apa, KOL siapa, tanggal kapan.</p></div>
+      <div class="step"><span class="num">3</span><p><b>Jawab rate &amp; ketersediaan</b> dari daftar KOL dan kalender.</p></div>
+      <div class="step"><span class="num">4</span><p><b>Tawarkan alternatif</b> kalau KOL yang diminta penuh.</p></div>
+      <div class="step"><span class="num">5</span><p><b>Serahkan ke admin</b> yang pegang KOL itu, dengan ringkasan 🆕.</p></div>
+    </div>
+    <div>
+      <div class="card warn" style="margin-bottom:16px">
+        <h2>Bot tidak akan…</h2>
+        <ul>
+          <li>menyebut alasan talent sibuk</li>
+          <li>menjawab hal di luar layanan Heroez</li>
+          <li>membuka link apa pun</li>
+          <li>membalas talent atau klien lama</li>
+        </ul>
+      </div>
+      <div class="card ok"><p style="margin:0"><b>Bot berhenti</b> begitu kamu membalas sendiri. Sejak itu chat sepenuhnya milik kamu.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Bot salah jawab? Laporkan ke supervisor. Teks dan data bot diubah di halaman Pengetahuan.</span><span>7</span></div>
+</section>
+
+<!-- 8 Handover rules -->
+<section class="s">
+  <div class="kicker">Siapa pegang lead baru</div>
+  <h1>Lead masuk ke orang yang tepat</h1>
+  <table>
+    <tr><th style="width:430px">Situasi</th><th>Diserahkan ke</th></tr>
+    <tr><td>Brand menyebut KOL tertentu</td><td class="k">Admin yang memegang KOL itu</td></tr>
+    <tr><td>Brand tidak menyebut KOL / minta "solusi"</td><td class="k">Supervisor memilih admin</td></tr>
+    <tr><td>Kerja nano KOL</td><td class="k">Supervisor memilih admin</td></tr>
+    <tr><td>Brand minta jam tertentu (bukan tanggal)</td><td class="k">Admin, bot tidak menjawab jamnya</td></tr>
+    <tr><td>Talent non-eksklusif</td><td class="k">Bot bilang "rate dikonfirmasi admin"</td></tr>
+  </table>
+  <div class="card info" style="margin-top:26px">
+    <p style="margin:0"><b>Supervisor:</b> notifikasi lead punya tombol <span class="btn">→ Rina</span> <span class="btn">→ Budi</span>
+      <span class="btn">✋ Saya tangani sendiri</span>. Kalau 30 menit tidak ada yang memilih, sistem membagi otomatis.</p>
+  </div>
+  <div class="foot"><span>Asisten Heroez</span><span>8</span></div>
+</section>
+
+<!-- 9 Promises -->
+<section class="s">
+  <div class="kicker">Janji ke klien</div>
+  <h1>"Besok saya kirim proposalnya ya" → diingatkan besok</h1>
+  <div class="grid2" style="align-items:start">
+    <div>
+      <p>Sistem membaca balasan kamu. Kalau ada janji dengan waktu, ia mencatatnya:</p>
+      <ul>
+        <li><b>besok</b> → besok jam 10:00</li>
+        <li><b>nanti sore</b> → hari ini jam 16:00</li>
+        <li><b>hari Jumat</b> → Jumat jam 10:00</li>
+        <li><b>jam 3 sore</b> → jam 15:00</li>
+        <li><b>minggu depan</b> → Senin depan</li>
+      </ul>
+      <p class="muted" style="margin-top:14px">Sudah kirim ke klien? Janji otomatis selesai, tidak perlu tekan apa-apa.</p>
+    </div>
+    <div>
+      <div class="tg">
+        ⏰ <b>Janji ke Glowskin jatuh tempo</b> (Sel 03/11 10:00)<br>
+        “Siap kak, besok saya kirim proposalnya ya”<br>
+        <span style="color:#2a5db0">Buka chat</span>
+        <div class="row"><span>✅ Sudah</span><span>⏰ 2 jam lagi</span></div>
+      </div>
+      <p class="muted" style="font-size:17px;margin-top:16px">Belum ditandai 2 jam kerja kemudian → supervisor diberi tahu sekali.
+        Ketik <code>/janji</code> untuk melihat janji kamu yang masih terbuka.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Asisten Heroez</span><span>9</span></div>
+</section>
+
+<!-- 10 Deals -->
+<section class="s">
+  <div class="kicker">Pipeline deal</div>
+  <h1>Setiap brand tercatat sampai lunas</h1>
+  <svg viewBox="0 0 1120 90" width="1120" height="90" style="margin-top:22px" font-family="Inter" font-size="17" font-weight="650">
+    <g fill="#f5f6fa">
+      <rect x="0" y="15" width="150" height="58" rx="12"/><rect x="180" y="15" width="150" height="58" rx="12"/>
+      <rect x="360" y="15" width="150" height="58" rx="12" fill="#fff4dd"/><rect x="540" y="15" width="150" height="58" rx="12"/>
+      <rect x="720" y="15" width="190" height="58" rx="12"/><rect x="940" y="15" width="150" height="58" rx="12" fill="#e3f6ec"/>
+    </g>
+    <g text-anchor="middle" fill="#14182b">
+      <text x="75" y="50">Lead</text><text x="255" y="50">Proposal</text><text x="435" y="50">Deal</text>
+      <text x="615" y="50">Kontrak</text><text x="815" y="50">Ditandatangani</text><text x="1015" y="50">Lunas</text>
+    </g>
+    <g fill="#9aa0b1"><path d="M156,44 l16,0 m-6,-6 l6,6 l-6,6" stroke="#9aa0b1" stroke-width="2" fill="none"/>
+      <path d="M336,44 l16,0 m-6,-6 l6,6 l-6,6" stroke="#9aa0b1" stroke-width="2" fill="none"/>
+      <path d="M516,44 l16,0 m-6,-6 l6,6 l-6,6" stroke="#9aa0b1" stroke-width="2" fill="none"/>
+      <path d="M696,44 l16,0 m-6,-6 l6,6 l-6,6" stroke="#9aa0b1" stroke-width="2" fill="none"/>
+      <path d="M916,44 l16,0 m-6,-6 l6,6 l-6,6" stroke="#9aa0b1" stroke-width="2" fill="none"/></g>
+  </svg>
+  <div class="grid3" style="margin-top:14px">
+    <div class="card"><h2>Otomatis</h2><p><b>Lead</b> saat bot menyerahkan brand. <b>Kontrak</b> saat kontrak dibuat di aplikasi, nilainya ikut terisi.</p></div>
+    <div class="card warn"><h2>Satu tap dari kamu</h2><p>Klien bilang "oke deal"? Telegram bertanya <b>Catat sebagai Deal?</b> Tekan <span class="btn">✅ Ya, deal</span> atau <span class="btn">Belum</span></p></div>
+    <div class="card"><h2>Supervisor</h2><p>Hanya supervisor yang menandai <b>Lunas</b> atau <b>Batal</b>. Semua tahap terlihat di halaman Deal dan Google Sheet ops.</p></div>
+  </div>
+  <div class="foot"><span>AI tidak pernah mencatat deal sendiri: selalu kamu yang memastikan</span><span>10</span></div>
+</section>
+
+<!-- 11 Contracts -->
+<section class="s">
+  <div class="kicker">Kontrak</div>
+  <h1>Kontrak dari template yang sudah disetujui lawyer</h1>
+  <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:40px;margin-top:22px">
+    <div>
+      <div class="step"><span class="num">1</span><p>Buka halaman <b>Kontrak</b> → pilih template.</p></div>
+      <div class="step"><span class="num">2</span><p>Isi data klien, baris SOW (talent, platform, fee).</p></div>
+      <div class="step"><span class="num">3</span><p>Pilih <b>deal terkait</b> supaya pipeline ikut terisi.</p></div>
+      <div class="step"><span class="num">4</span><p><b>Simpan &amp; buat dokumen</b> → unduh Word, nomor kontrak otomatis.</p></div>
+    </div>
+    <div>
+      <div class="card info" style="margin-bottom:16px"><p style="margin:0">Total dan PPN dihitung otomatis. Isi pasal tidak bisa diubah di aplikasi.</p></div>
+      <div class="card warn"><p style="margin:0">Klien minta pakai kontrak <b>milik mereka</b>? Tetap dikerjakan di luar aplikasi, seperti biasa.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Hanya supervisor yang bisa mengunggah dan menyetujui template baru</span><span>11</span></div>
+</section>
+
+<!-- 12 Web pages & commands -->
+<section class="s">
+  <div class="kicker">Alat kamu</div>
+  <h1>Telegram untuk cepat, halaman web untuk lengkap</h1>
+  <div class="grid2">
+    <div class="card">
+      <h2>Perintah di bot Telegram</h2>
+      <table style="margin-top:6px">
+        <tr><td class="k"><code>/antrian</code></td><td>chat yang menunggu balasan kamu</td></tr>
+        <tr><td class="k"><code>/semua</code></td><td>semua chat yang menunggu</td></tr>
+        <tr><td class="k"><code>/cari Rina</code></td><td>cari kontak (nama atau nomor)</td></tr>
+        <tr><td class="k"><code>/janji</code></td><td>janji yang belum selesai</td></tr>
+        <tr><td class="k"><code>/spam</code></td><td>pesan yang diduga spam</td></tr>
+        <tr><td class="k"><code>/bantuan</code></td><td>daftar perintah</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Halaman web <span class="muted" style="font-weight:500;font-size:17px">ops.heroez.id</span></h2>
+      <p>Login dengan kode sekali pakai yang dikirim ke <b>email kantor</b>.</p>
+      <ul>
+        <li><b>Antrian</b>: chat yang menunggu, tombol sama seperti Telegram</li>
+        <li><b>Deal</b>: pipeline, ubah tahap, nilai, catatan</li>
+        <li><b>Kontrak</b>: buat dan unduh kontrak</li>
+      </ul>
+      <p class="muted" style="font-size:16px">Supervisor juga: Template, Pengetahuan (daftar KOL, FAQ, teks bot).</p>
+    </div>
+  </div>
+  <div class="foot"><span>Membalas klien tetap lewat WhatsApp Web / HP</span><span>12</span></div>
+</section>
+
+<!-- 13 Links & safety -->
+<section class="s">
+  <div class="kicker">Keamanan</div>
+  <h1>Link di pesan klien tidak pernah dibuka sistem</h1>
+  <div class="grid3">
+    <div class="card"><div class="big-emoji">🔗</div><h2>Ditulis aman</h2><p>Di Telegram, link tampil seperti <code>hxxps://bit[.]ly/abc</code> supaya tidak terbuka tanpa sengaja.</p></div>
+    <div class="card no"><div class="big-emoji">⚠️</div><h2>Link mencurigakan</h2><p>Jangan dibuka, jangan isi data apa pun. Laporkan ke supervisor.</p></div>
+    <div class="card warn"><div class="big-emoji">🛡️</div><h2>Ingat</h2><p>Meta/WhatsApp <b>tidak pernah</b> minta verifikasi akun lewat link di chat.</p></div>
+  </div>
+  <div class="card" style="margin-top:22px"><p style="margin:0">Data klien: isi pesan dihapus otomatis setelah 90 hari. Klien minta datanya dihapus? Supervisor memakai <code>/hapus &lt;nomor&gt;</code>.</p></div>
+  <div class="foot"><span>Asisten Heroez</span><span>13</span></div>
+</section>
+
+<!-- 14 Troubleshooting -->
+<section class="s">
+  <div class="kicker">Kalau ada masalah</div>
+  <h1>Pertanyaan yang sering muncul</h1>
+  <table>
+    <tr><td class="k" style="width:470px">Diingatkan padahal sudah balas</td><td>Balas lewat aplikasi Windows? Pakai HP / Web. Tekan ✅ Sudah dibalas.</td></tr>
+    <tr><td class="k">Tidak dapat notifikasi sama sekali</td><td>Sudah kirim <code>/start</code> ke bot? Tanya supervisor apakah ID kamu sudah didaftarkan.</td></tr>
+    <tr><td class="k">Chat ini bukan untuk saya</td><td>Beri tahu supervisor; supervisor bisa menugaskan ulang.</td></tr>
+    <tr><td class="k">Bot memberi info yang salah</td><td>Lapor supervisor dengan nama klien dan isinya.</td></tr>
+    <tr><td class="k">Bot / sistem diam</td><td>Tetap kerja di WhatsApp seperti biasa. Manajemen otomatis diberi tahu.</td></tr>
+    <tr><td class="k">Pesan klien dianggap spam</td><td>Ketik <code>/spam</code> → tombol <b>Bukan spam</b> meneruskannya ke admin.</td></tr>
+  </table>
+  <div class="foot"><span>Asisten Heroez</span><span>14</span></div>
+</section>
+
+<!-- 15 Cheat sheet -->
+<section class="s dark">
+  <div class="kicker">Ringkasan</div>
+  <h1 style="margin-bottom:28px">5 hal yang perlu diingat</h1>
+  <div class="step"><span class="num">1</span><p style="font-size:23px">Balas dari <b>HP atau WhatsApp Web</b>, bukan aplikasi Windows.</p></div>
+  <div class="step"><span class="num">2</span><p style="font-size:23px">Notifikasi Telegram = ada klien menunggu. <b>✋ Ambil</b>, lalu balas.</p></div>
+  <div class="step"><span class="num">3</span><p style="font-size:23px">Bot menyambut brand baru; begitu kamu membalas, chat milik kamu.</p></div>
+  <div class="step"><span class="num">4</span><p style="font-size:23px">Tulis janji dengan waktu ("besok", "jam 3"): sistem mengingatkan.</p></div>
+  <div class="step"><span class="num">5</span><p style="font-size:23px">Klien setuju? Tekan <b>✅ Ya, deal</b>. Buat kontrak dari aplikasi.</p></div>
+  <div class="foot"><span>Pertanyaan? Hubungi supervisor kamu.</span><span>15</span></div>
+</section>
+
+</body>
+</html>
