@@ -68,7 +68,8 @@ can upload or approve templates. Never add `/webhook/*` to the Access app (Meta 
    that a supervisor checks and approves before it is used — nothing from a document reaches the bot unreviewed.
    **Google Calendar**: paste the shared calendar's secret iCal address (and per-talent calendars if any); only
    busy/free per date is kept, never the event text.
-2. Settings, section 7: tick the bot options, set the reply-time promise and the monthly message limit.
+2. Settings, section 7: choose the bot mode — **Mati**, **Cek dulu** (each reply approved by a supervisor on Telegram first;
+   the default) or **Otomatis** — and set the reply-time promise and the monthly message limit.
    Section 9: the Meta **Phone number ID** and a permanent **System user access token** (from the Meta app).
 3. Keep **Shadow** mode for the first week: the bot's would-be messages are written to
    `data\shadow_alerts.jsonl` (type `whatsapp_send`) so you can read exactly what it would have said.

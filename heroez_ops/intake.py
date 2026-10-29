@@ -75,8 +75,16 @@ class Intake:
         self.cfg, self.store, self.engine, self.kb, self.sender = cfg, store, engine, kb, sender
         self.files_dir, self.ai, self.deals = files_dir, ai, deals
         self.now = int(time.time())
+        self.approvals = None          # ReplyApproval, set by Service (Telegram cards for "cek dulu" mode)
+        self._direct = False           # True while sending an approved message
+        self.last_queued = False
         from .bizhours import BusinessClock
         self.clock = BusinessClock(cfg)
+
+    @property
+    def reply_mode(self) -> str:
+        from .approvals import effective_mode
+        return effective_mode(self.cfg, self.store)
 
     # -- entry points -------------------------------------------------------------
     def on_event(self, ev: MessageEvent, now: int | None = None) -> None:
@@ -86,18 +94,21 @@ class Intake:
         self.now = now
         row = self.row(ev.wa_id)
         if ev.direction == "out":
+            if ev.source in ("echo", "api"):
+                self._cancel_pending(ev.wa_id, "✋ Admin sudah membalas sendiri; balasan bot tidak dikirim.")
             if row and row["status"] == "active" and ev.source in ("echo", "api"):
                 self._set(ev.wa_id, status="stopped", outcome="admin membalas sendiri")
             return
+        on = self.reply_mode != "off"
         if row and row["status"] == "active":
             self._advance(row, ev, now)
-        elif row and row["status"] == "spam" and ev.text and self.cfg.intake_enabled:
+        elif row and row["status"] == "spam" and ev.text and on:
             # Second message after a spam verdict: look again instead of staying silent forever.
             self._set(ev.wa_id, status="active", step="new", data={"texts": [ev.text[:1500]], "asked": 0, "was_spam": True})
             self._understand_and_act(self.row(ev.wa_id), ev)
-        elif self.cfg.intake_enabled and self._should_start(ev):
+        elif on and self._should_start(ev):
             self._start(ev, now)
-        elif self.cfg.faq_auto_send and self._may_auto_answer(ev):
+        elif on and self.cfg.faq_auto_send and self._may_auto_answer(ev):
             faq = self.kb.match_faq(ev.text)
             if faq:
                 self._send_faq(ev.wa_id, faq, "id")
@@ -106,7 +117,10 @@ class Intake:
         """The client stopped answering: a human takes over."""
         now = now or int(time.time())
         self.now = now
-        rows = self.store.q("SELECT * FROM intake WHERE status='active' AND updated_at<?",
+        self._expire_approvals(now)
+        # While a bot message waits for approval the client has not seen it yet: don't time them out.
+        waiting = "AND wa_id NOT IN (SELECT wa_id FROM bot_outbox WHERE status='pending')" if self.sender.live else ""
+        rows = self.store.q(f"SELECT * FROM intake WHERE status='active' AND updated_at<? {waiting}",
                             (now - self.cfg.intake_timeout_minutes * 60,))
         for r in rows:
             data = json.loads(r["data"])
@@ -168,6 +182,13 @@ class Intake:
         return t
 
     def _send(self, fn, wa: str, *args, purpose: str = "intake", body: str = "") -> bool:
+        self.last_queued = False
+        mode = self.reply_mode
+        if mode == "off":
+            log.info("bot is switched off; message to %s not sent", wa)
+            return False
+        if mode == "approve" and not self._direct:
+            return self._queue(fn.__name__, wa, list(args), purpose, body)
         if not self._budget_ok():
             log.warning("monthly send budget reached; bot message not sent")
             return False
@@ -182,6 +203,103 @@ class Intake:
 
     def _text(self, wa: str, body: str, purpose: str = "intake") -> bool:
         return self._send(self.sender.text, wa, body, purpose=purpose, body=body)
+
+    # -- "cek dulu": supervisors approve each bot message ------------------------------
+    def _queue(self, kind: str, wa: str, args: list, purpose: str, body: str) -> bool:
+        pid = self.store.x("INSERT INTO bot_outbox(wa_id,kind,args,purpose,body,status,created_at) VALUES(?,?,?,?,?,'pending',?)",
+                           (wa, kind, json.dumps(args, ensure_ascii=False), purpose, body, self.now)).lastrowid
+        self.store.audit("bot", "reply_queued", wa, {"id": pid, "purpose": purpose}, self.now)
+        self.last_queued = True
+        if self.approvals:
+            try:
+                self.approvals.show(pid, self.sender.live)
+            except Exception:
+                log.exception("could not show approval card %s", pid)
+        return True
+
+    def approve(self, pid: int, who: str, at: int) -> str:
+        """✅ Kirim (live) or 👍 (preview). Sends this message and any earlier ones still waiting, in order."""
+        p = self.store.one("SELECT * FROM bot_outbox WHERE id=?", (pid,))
+        if not p or p["status"] != "pending":
+            return "Sudah ditangani sebelumnya."
+        self.now = at
+        if not self.sender.live:
+            self.store.x("UPDATE bot_outbox SET status='rated_ok', decided_at=?, decided_by=? WHERE id=?", (at, who, pid))
+            self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)", (p["wa_id"], "bot_reply_ok", who, "-", at))
+            if self.approvals:
+                self.approvals.close([pid], f"👍 Dinilai bagus ({who})")
+            return "👍 Dicatat."
+        rows = self.store.q("SELECT * FROM bot_outbox WHERE wa_id=? AND status='pending' AND id<=? ORDER BY id", (p["wa_id"], pid))
+        sent = []
+        self._direct = True
+        try:
+            for r in rows:
+                args = json.loads(r["args"])
+                if r["kind"] == "ratecard":
+                    ok = self._send_ratecard(r["wa_id"], args[0])
+                else:
+                    ok = self._send(getattr(self.sender, r["kind"]), r["wa_id"], *args, purpose=r["purpose"], body=r["body"])
+                self.store.x("UPDATE bot_outbox SET status=?, decided_at=?, decided_by=? WHERE id=?",
+                             ("sent" if ok else "failed", at, who, r["id"]))
+                if ok:
+                    sent.append(r["id"])
+                    if r["purpose"] == "faq" and not self.row(r["wa_id"]):
+                        self.engine.mark_answered_by_bot(r["wa_id"], "FAQ dijawab bot (disetujui)", at)
+        finally:
+            self._direct = False
+        if self.row(p["wa_id"]) and self.row(p["wa_id"])["status"] == "active":
+            self._set(p["wa_id"])                   # the client's reply clock starts now
+        self.store.audit(who, "reply_approved", p["wa_id"], {"ids": [r["id"] for r in rows], "sent": sent}, at)
+        if self.approvals:
+            self.approvals.close(sent, f"✅ Dikirim ({who})")
+            self.approvals.close([r["id"] for r in rows if r["id"] not in sent], f"⚠️ Gagal dikirim ({who}); cek koneksi Meta")
+        return "✅ Terkirim." if len(sent) == len(rows) else "⚠️ Sebagian gagal dikirim."
+
+    def reject(self, pid: int, who: str, at: int) -> str:
+        """❌ (live): nothing is sent and an admin takes the chat. 👎 (preview): noted for improving the bot."""
+        p = self.store.one("SELECT * FROM bot_outbox WHERE id=?", (pid,))
+        if not p or p["status"] != "pending":
+            return "Sudah ditangani sebelumnya."
+        self.now = at
+        self.store.x("INSERT INTO feedback(wa_id,kind,admin,state_before,at) VALUES(?,?,?,?,?)", (p["wa_id"], "bot_reply_wrong", who, "-", at))
+        if not self.sender.live:
+            self.store.x("UPDATE bot_outbox SET status='rated_bad', decided_at=?, decided_by=? WHERE id=?", (at, who, pid))
+            if self.approvals:
+                self.approvals.close([pid], f"👎 Dinilai kurang tepat ({who})")
+            return "👎 Dicatat. Perbaiki teks/data bot di halaman Pengetahuan."
+        ids = [r["id"] for r in self.store.q("SELECT id FROM bot_outbox WHERE wa_id=? AND status='pending'", (p["wa_id"],))]
+        self.store.x("UPDATE bot_outbox SET status='rejected', decided_at=?, decided_by=? WHERE wa_id=? AND status='pending'",
+                     (at, who, p["wa_id"]))
+        row = self.row(p["wa_id"])
+        if row and row["status"] == "active":
+            self._handoff(row, f"balasan bot ditolak ({who})")
+        self.store.audit(who, "reply_rejected", p["wa_id"], {"ids": ids}, at)
+        if self.approvals:
+            self.approvals.close(ids, f"❌ Tidak dikirim ({who}); chat diserahkan ke admin")
+        return "❌ Tidak dikirim; admin akan membalas."
+
+    def _cancel_pending(self, wa: str, note: str) -> None:
+        ids = [r["id"] for r in self.store.q("SELECT id FROM bot_outbox WHERE wa_id=? AND status='pending'", (wa,))]
+        if not ids:
+            return
+        self.store.x("UPDATE bot_outbox SET status='cancelled', decided_at=? WHERE wa_id=? AND status='pending'", (self.now, wa))
+        if self.approvals:
+            self.approvals.close(ids, note)
+
+    def _expire_approvals(self, now: int) -> None:
+        """Live: not approved in time → nothing sent, a person answers. Preview cards just lapse after a day."""
+        limit = self.cfg.bot_approve_timeout_minutes * 60 if self.sender.live else 86400
+        old = self.store.q("SELECT DISTINCT wa_id FROM bot_outbox WHERE status='pending' AND created_at<?", (now - limit,))
+        for r in old:
+            ids = [x["id"] for x in self.store.q("SELECT id FROM bot_outbox WHERE wa_id=? AND status='pending'", (r["wa_id"],))]
+            self.store.x("UPDATE bot_outbox SET status='expired', decided_at=? WHERE wa_id=? AND status='pending'", (now, r["wa_id"]))
+            if self.sender.live:
+                row = self.row(r["wa_id"])
+                if row and row["status"] == "active":
+                    self._handoff(row, "balasan bot tidak disetujui tepat waktu")
+                if self.approvals:
+                    self.approvals.close(ids, f"⌛ Tidak disetujui dalam {self.cfg.bot_approve_timeout_minutes} menit; "
+                                              "tidak dikirim, chat diserahkan ke admin")
 
     # -- state ------------------------------------------------------------------------
     def _set(self, wa: str, **cols) -> None:
@@ -369,10 +487,13 @@ class Intake:
         self._set(wa, data=data)
         self._handoff(self.row(wa), "info talent dikirim" if found else "dijawab bot")
 
-    def _send_ratecard(self, wa: str, lang: str) -> None:
+    def _send_ratecard(self, wa: str, lang: str) -> bool:
         pdf = self.files_dir / "ratecard.pdf"
         if not pdf.exists():
-            return
+            return False
+        caption = self._t("ratecard_caption", lang)
+        if self.reply_mode == "approve" and not self._direct:
+            return self._queue("ratecard", wa, [lang], "intake", caption)
         media = self.kb.get("ratecard_media") or {}
         if self.sender.live and (not media.get("id") or media.get("uploaded_at", 0) < time.time() - 25 * 86400):
             try:
@@ -380,15 +501,14 @@ class Intake:
                 self.kb.set("ratecard_media", media, "bot")
             except SendError as e:
                 log.error("rate card upload failed: %s", e)
-                return
-        caption = self._t("ratecard_caption", lang)
-        self._send(self.sender.document, wa, media.get("id") or "shadow-media", "Rate card Heroez.pdf", caption, body=caption)
+                return False
+        return self._send(self.sender.document, wa, media.get("id") or "shadow-media", "Rate card Heroez.pdf", caption, body=caption)
 
     def _send_faq(self, wa: str, faq: dict, lang: str) -> None:
         answer = (faq.get("answer_en") if lang == "en" and faq.get("answer_en") else faq.get("answer_id")) or ""
         if answer and self._text(wa, answer, purpose="faq"):
             self.store.audit("bot", "faq_answer", wa, {"faq": faq.get("id")})
-            if self.sender.live and not self.row(wa):
+            if self.sender.live and not self.row(wa) and not self.last_queued:
                 self.engine.mark_answered_by_bot(wa, f"FAQ dijawab otomatis: {faq['questions'][0][:60]}", self.now)
 
     def _handoff(self, row, outcome: str, triage: bool = False) -> None:

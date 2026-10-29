@@ -83,6 +83,15 @@ class Digest:
             lines += ["", f"🤖 AI bulan ini: {calls} pesan dicek · ±US${usd:.2f}"]
         from .deals import Deals
         lines += ["", *Deals(self.cfg, self.store).summary_lines(s, e)]
+        from .approvals import ReplyApproval
+        ap = ReplyApproval(self.cfg, self.store, None).stats(s, e)
+        if ap:
+            parts = [f"{label} {ap[k]}" for k, label in (("sent", "dikirim setelah disetujui"), ("rejected", "ditolak"),
+                                                          ("expired", "tidak disetujui tepat waktu"), ("cancelled", "didahului admin"),
+                                                          ("rated_ok", "contoh 👍"), ("rated_bad", "contoh 👎"), ("pending", "menunggu"))
+                     if ap.get(k)]
+            if parts:
+                lines += ["", "🤖 Balasan bot: " + " · ".join(parts)]
         from .promises import Promises
         ps = Promises(self.cfg, self.store, self.clock, None).stats(s, e)
         if ps["kept"] or ps["late"] or ps["open_late"]:

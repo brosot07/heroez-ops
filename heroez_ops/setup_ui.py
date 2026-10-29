@@ -115,8 +115,11 @@ class SetupUI:
         raw.setdefault("ai", {})["enabled"] = bool(form.get("ai_enabled"))
         raw.setdefault("tax", {})["pkp"] = bool(form.get("pkp"))
         b = raw.setdefault("bot", {})
-        b["intake_enabled"], b["faq_auto_send"], b["drafts_enabled"] = (bool(form.get("intake_enabled")),
-                                                                         bool(form.get("faq_auto_send")), bool(form.get("drafts_enabled")))
+        b["reply_mode"] = g("bot_mode") if g("bot_mode") in ("off", "approve", "auto") else "off"
+        b.pop("intake_enabled", None)
+        b["faq_auto_send"], b["drafts_enabled"] = bool(form.get("faq_auto_send")), bool(form.get("drafts_enabled"))
+        if g("approve_timeout").isdigit():
+            b["approve_timeout_minutes"] = max(5, int(g("approve_timeout")))
         if g("sla_text"):
             b["sla_text"] = g("sla_text")
         if g("send_budget").isdigit():
@@ -175,6 +178,7 @@ class SetupUI:
             "# Edited from the Heroez Ops settings page.\n" + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
             encoding="utf-8")
         secretstore.save(self.secrets_path, new_secrets)
+        self.store.x("DELETE FROM kv WHERE key='bot_reply_mode'")     # the settings page wins over /bot overrides
 
     # -- page -------------------------------------------------------------
     def page(self, message: str = "", ok: bool = True) -> str:
@@ -219,6 +223,21 @@ class SetupUI:
                                 for u in newcomers) or "<li class='muted'>Belum ada. Minta orangnya kirim /start ke bot.</li>"
         msg = f'<div class="msg {"ok" if ok else "bad"}">{_e(message)}</div>' if message else ""
         has = lambda k: "✅ tersimpan" if sec.get(k) else "❌ belum diisi"  # noqa: E731
+        from .config import _reply_mode
+        try:
+            cur_mode = _reply_mode(raw)
+        except ValueError:
+            cur_mode = "off"
+        override = self.store.get_kv("bot_reply_mode")
+        bot_modes = "".join(
+            f'<label style="font-weight:400"><input type="radio" name="bot_mode" value="{v}" {"checked" if v == cur_mode else ""}> {t}</label>'
+            for v, t in (("off", "<b>Mati</b>: bot tidak mengirim apa pun"),
+                         ("approve", "<b>Cek dulu</b>: setiap balasan bot dikirim ke supervisor di Telegram; baru terkirim ke klien setelah "
+                                     "ditekan ✅ Kirim. Di mode Shadow/Review hanya contoh (👍/👎), tidak ada yang terkirim."),
+                         ("auto", "<b>Otomatis</b>: bot membalas sendiri 24 jam (hanya di mode Live)")))
+        if override and override != cur_mode:
+            bot_modes += (f'<p class="muted">⚠️ Saat ini diubah lewat Telegram (/bot) menjadi <b>{_e(override)}</b>. '
+                          f'Menyimpan halaman ini mengembalikannya ke pilihan di atas.</p>')
         webhook_url = f"https://{_e(host)}/webhook/meta" if host else "(isi alamat publik dulu)"
         ai_cfg = raw.get("ai") or {}
         calls, usd = month_cost(self.store)
@@ -286,11 +305,15 @@ Chat yang ditutup klien ("baik kak, kami review dulu") tidak dikirimi pengingat.
 <input type="password" name="anthropic_api_key" autocomplete="off"></div>
 
 <div class="card"><h2>7. Bot WhatsApp (balasan otomatis)</h2>
-<p class="muted">Bot hanya menyapa kontak <b>baru</b> (bukan talent / klien lama), berhenti begitu admin membalas, dan hanya terkirim di mode Live.
-Harga & ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI. Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
-<label style="font-weight:400"><input type="checkbox" name="intake_enabled" {"checked" if (raw.get("bot") or {}).get("intake_enabled") else ""}> Bot menyapa kontak baru: saring spam, tanya kebutuhan brand, kirim rate & ketersediaan talent, lalu serahkan ke admin</label>
+<p class="muted">Bot hanya menyapa kontak <b>baru</b> (bukan talent / klien lama): saring spam, tanya kebutuhan brand, kirim rate &amp; ketersediaan
+talent, lalu serahkan ke admin. Berhenti begitu admin membalas. Harga &amp; ketersediaan diambil dari halaman Pengetahuan, bukan dikarang AI.
+Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
+<label>Balasan bot</label>
+{bot_modes}
+<div class="row"><div><label>Batas waktu persetujuan (menit) <small>(lewat dari ini: tidak dikirim, diserahkan ke admin)</small></label>
+<input type="number" name="approve_timeout" min="5" value="{_e((raw.get("bot") or {}).get("approve_timeout_minutes", 30))}"></div><div></div></div>
 <label style="font-weight:400"><input type="checkbox" name="faq_auto_send" {"checked" if (raw.get("bot") or {}).get("faq_auto_send") else ""}> Kirim jawaban FAQ otomatis (hanya yang disetujui & pertanyaannya persis sama)</label>
-<label style="font-weight:400"><input type="checkbox" name="drafts_enabled" {"checked" if (raw.get("bot") or {}).get("drafts_enabled", True) else ""}> Saran balasan AI di notifikasi Telegram (terkirim hanya jika admin menekan 📤 Kirim)</label>
+<label style="font-weight:400"><input type="checkbox" name="drafts_enabled" {"checked" if (raw.get("bot") or {}).get("drafts_enabled", True) else ""}> Saran balasan AI di notifikasi Telegram (admin menyalinnya sendiri ke WhatsApp; tidak pernah dikirim otomatis)</label>
 <div class="row"><div><label>Janji waktu balas <small>(dipakai di kalimat bot)</small></label><input type="text" name="sla_text" value="{_e((raw.get("bot") or {}).get("sla_text", "1 jam kerja"))}"></div>
 <div><label>Batas pesan bot per bulan</label><input type="number" name="send_budget" value="{_e((raw.get("bot") or {}).get("monthly_send_budget", 1000))}"></div></div></div>
 

@@ -27,10 +27,15 @@ whatsapp:
   graph_api_version: "v23.0"   # check the current version in Meta's docs when connecting
 
 bot:
-  # Phase 2. Bot messages are sent only in live mode AND when switched on here.
-  intake_enabled: false        # fixed menu for new unknown contacts (never talents / existing clients)
+  # Phase 2. The bot greets new unknown contacts (never talents / existing clients).
+  #   off     = the bot never sends anything
+  #   approve = every bot message is shown to the supervisors on Telegram first; sent only after ✅ Kirim
+  #             (in shadow/review mode the cards are a preview with 👍/👎 and nothing is sent)
+  #   auto    = the bot sends by itself (live mode only)
+  reply_mode: approve
+  approve_timeout_minutes: 30  # not approved in time -> nothing sent, chat handed to an admin
   faq_auto_send: false         # send an approved FAQ answer word for word when the question matches exactly
-  drafts_enabled: true         # AI reply suggestion in Telegram alerts, sent only after an admin taps Kirim
+  drafts_enabled: true         # AI reply suggestion in Telegram alerts; the admin copies it into WhatsApp
   drafts_model: claude-sonnet-5-5
   max_drafts_per_day: 150
   sla_text: "1 jam kerja"      # used in the bot's "we will reply within ..." line

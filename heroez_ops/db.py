@@ -261,6 +261,21 @@ CREATE TABLE IF NOT EXISTS promises (
     done_by TEXT
 );
 CREATE INDEX IF NOT EXISTS promises_open ON promises(status, due_at);
+CREATE TABLE IF NOT EXISTS bot_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT NOT NULL,
+    kind TEXT NOT NULL,                      -- text | buttons | list | document | ratecard
+    args TEXT NOT NULL,                      -- JSON arguments after the recipient
+    purpose TEXT NOT NULL,
+    body TEXT NOT NULL,                      -- what the client would read
+    status TEXT NOT NULL,                    -- pending | sent | failed | rejected | cancelled | expired | rated_ok | rated_bad
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER,
+    decided_by TEXT,
+    card_text TEXT,
+    cards TEXT                               -- JSON [[chat_id, message_id], ...]
+);
+CREATE INDEX IF NOT EXISTS bot_outbox_pending ON bot_outbox(status, wa_id);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -341,7 +356,7 @@ class Store:
         counts = {}
         with self.tx():
             for table in ("messages", "conversations", "state_changes", "waits", "feedback", "intake", "message_links",
-                          "outbox", "contacts", "reply_examples", "draft_outcomes", "promises"):
+                          "outbox", "contacts", "reply_examples", "draft_outcomes", "promises", "bot_outbox"):
                 counts[table] = self.x(f"DELETE FROM {table} WHERE wa_id=?", (wa_id,)).rowcount
             # Deals are business records: keep brand/value/stage, drop the person's number and name.
             counts["deals"] = self.x("UPDATE deals SET wa_id='', contact_name='' WHERE wa_id=?", (wa_id,)).rowcount

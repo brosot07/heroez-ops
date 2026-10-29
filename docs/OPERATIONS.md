@@ -18,7 +18,16 @@ What runs where, what the app does by itself, and what a person does. Admin-faci
 ## 2. Modes (settings section 1)
 - **Shadow**: everything is computed and logged to `data\shadow_alerts.jsonl`; nothing is sent to anyone.
 - **Review**: Telegram alerts go only to supervisors, each with 👍/👎 to judge accuracy; the bot still sends nothing.
-- **Live**: alerts to admins/groups per the ladder; the bot replies to new brands (if enabled in section 7).
+- **Live**: alerts to admins/groups per the ladder; the bot replies to new brands according to its own setting (below).
+
+**Bot replies (settings section 7, or `/bot` in Telegram):**
+- **Mati**: the bot sends nothing.
+- **Cek dulu** (default): every message the bot wants to send goes to the supervisors on Telegram with
+  ✅ Kirim / ❌ Jangan. Nothing reaches the client before ✅. Not approved within 30 minutes (setting) → not sent,
+  the chat goes to an admin. An admin replying first cancels it. In Shadow/Review mode the cards are previews
+  (👍/👎) and nothing is ever sent — use this to read the bot's answers before going live.
+- **Otomatis**: the bot sends by itself, 24/7 (Live mode only). Can only be switched on from the settings page;
+  supervisors can switch back with `/bot cek` or `/bot mati` from Telegram at any time.
 
 ## 3. What happens automatically
 | Event | The app does |
@@ -59,7 +68,7 @@ What runs where, what the app does by itself, and what a person does. Admin-faci
 | Reminders for chats already answered | admin replied from the WhatsApp **Windows app** (no echo) — use the phone or WhatsApp Web; ✅ *Sudah dibalas* clears it |
 | *Tunnel: berhenti* | restart the service; check the Cloudflare tunnel token (section 9) |
 | Meta webhook errors | `SETUP_RUNBOOK.md` §6; Meta app → Webhooks → subscription on the WABA |
-| Bot said something wrong | switch bot off (section 7) → fix texts/KOL data on Pengetahuan → Shadow for a day → on again |
+| Bot said something wrong | `/bot mati` (or `/bot cek`) in Telegram → fix texts/KOL data on Pengetahuan → back on after checking previews |
 | AI cost jumps | settings section 6: daily cap; digest shows the month's calls; the cap is 3,000 calls/day by default |
 | Lost owner password | Start menu → *Reset password Heroez Ops* (Windows admin) |
 | Client asks to be forgotten | `/hapus <nomor>` (supervisor) — erases messages, states, promises for that number, strips the number/name from deals, logs the request |

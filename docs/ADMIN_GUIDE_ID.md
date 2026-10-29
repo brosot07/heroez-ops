@@ -87,6 +87,11 @@ diminati, lalu memberi rate dan ketersediaan dari daftar KOL & kalender. Setelah
 layanan Heroez, tidak pernah menyebut alasan talent sibuk, dan tidak pernah membuka link.
 Kalau bot salah jawab, laporkan ke supervisor: teks dan data bot diubah di halaman **Pengetahuan**.
 
+**Mode bot** (`/bot` untuk melihat): **Mati**, **Cek dulu**, atau **Otomatis**. Di mode *Cek dulu*, setiap balasan bot
+dikirim dulu ke supervisor di Telegram dengan tombol ✅ **Kirim** / ❌ **Jangan**; klien baru menerima pesan setelah ✅.
+Kalau 30 menit tidak disetujui, pesan tidak dikirim dan chat diserahkan ke admin. Kalau kamu membalas lebih dulu,
+balasan bot otomatis dibatalkan. Supervisor bisa mengetik `/bot mati` atau `/bot cek` kapan saja.
+
 ## 8. Halaman web (Antrian, Deal, Kontrak)
 
 Buka `https://ops.heroez.id/antrian` dari laptop: masuk dengan kode sekali pakai yang dikirim ke email kantor kamu

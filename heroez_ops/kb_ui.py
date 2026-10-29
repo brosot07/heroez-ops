@@ -61,7 +61,8 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         n_kol = ui.store.one("SELECT COUNT(*) n FROM talents")["n"]
         n_busy = ui.store.one("SELECT COUNT(*) n FROM talent_busy")["n"]
         sends = month_sends(ui.store)
-        status = (f'<p>Bot menu brand: <b>{"aktif" if cfg.intake_enabled else "mati"}</b> · FAQ otomatis: '
+        from .approvals import MODE_LABELS, effective_mode
+        status = (f'<p>Bot WhatsApp: <b>{MODE_LABELS[effective_mode(cfg, ui.store)]}</b> · FAQ otomatis: '
                   f'<b>{"aktif" if cfg.faq_auto_send else "mati"}</b> · Saran balasan AI: <b>{"aktif" if cfg.drafts_enabled else "mati"}</b> · '
                   f'Mode: <b>{"LIVE" if cfg.live else "SHADOW (tidak ada yang terkirim)"}</b><br>'
                   f'Pesan dikirim bot bulan ini: <b>{sends}</b> / batas {cfg.monthly_send_budget} '

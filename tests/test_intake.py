@@ -60,7 +60,7 @@ class Wire:
 @pytest.fixture
 def bot(cfg, tmp_path):
     def make(answers, **cfg_over):
-        c = dataclasses.replace(cfg, **{"mode": "live", "intake_enabled": True, "faq_auto_send": True,
+        c = dataclasses.replace(cfg, **{"mode": "live", "intake_enabled": True, "bot_reply_mode": "auto", "faq_auto_send": True,
                                         "monthly_send_budget": 1000, **cfg_over})
         wire = Wire()
         store = Store(":memory:")

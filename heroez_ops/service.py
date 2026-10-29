@@ -10,6 +10,7 @@ from pathlib import Path
 from .ai import Classifier, ClaudeClassifier, build_transcript
 from .alerts.base import AlertChannel
 from .alerts.telegram import ShadowAlertChannel, TelegramAlertChannel
+from .approvals import ReplyApproval
 from .bizhours import BusinessClock
 from .bot import Bot
 from .config import Config
@@ -67,10 +68,12 @@ class Service:
         self.sender = sender or MetaSender(store, cfg.meta_access_token, cfg.phone_number_id, cfg.graph_api_version,
                                            live=cfg.live, shadow_log=shadow_dir / "shadow_alerts.jsonl")
         concierge = None
-        if cfg.intake_enabled and cfg.anthropic_api_key and self.classifier is not None:
+        if cfg.anthropic_api_key and self.classifier is not None:     # used only while the bot is on
             concierge = ConciergeAI(cfg.anthropic_api_key, store, cfg.tz, model=cfg.ai_model,
                                     daily_cap=cfg.ai_max_calls_per_day)
         self.intake = Intake(cfg, store, self.engine, self.kb, self.sender, shadow_dir / "kb", ai=concierge, deals=self.deals)
+        # "Cek dulu": bot messages go to the supervisors on Telegram for approval (a preview in shadow/review).
+        self.intake.approvals = ReplyApproval(cfg, store, self.reply_channel)
         self.drafter = drafter
         if self.drafter is None and cfg.drafts_enabled and cfg.anthropic_api_key:
             self.drafter = Drafter(cfg.anthropic_api_key, store, self.kb, cfg.tz, model=cfg.drafts_model,

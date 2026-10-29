@@ -91,6 +91,8 @@ class Config:
     phone_number_id: str = ""
     graph_api_version: str = "v23.0"
     intake_enabled: bool = False
+    bot_reply_mode: str = ""            # off | approve | auto ("" = follow intake_enabled)
+    bot_approve_timeout_minutes: int = 30
     faq_auto_send: bool = False
     drafts_enabled: bool = True
     drafts_model: str = "claude-sonnet-5-5"
@@ -165,6 +167,17 @@ def _time(value: str, name: str) -> dt.time:
         return dt.time.fromisoformat(str(value))
     except ValueError as e:
         raise ConfigError(f"{name} must look like 09:00, got {value!r}") from e
+
+
+def _reply_mode(raw: dict) -> str:
+    """bot.reply_mode: off | approve | auto. Older configs only have bot.intake_enabled."""
+    b = raw.get("bot") or {}
+    mode = str(b.get("reply_mode", "") or "").strip().lower()
+    if not mode:
+        return "auto" if b.get("intake_enabled") else "off"
+    if mode not in ("off", "approve", "auto"):
+        raise ConfigError(f"bot.reply_mode must be 'off', 'approve' or 'auto', got {mode!r}")
+    return mode
 
 
 def _stages(value) -> tuple[str, ...]:
@@ -288,7 +301,9 @@ def load_config(path: str | Path = "config/config.yaml", base_dir: Path | None =
         urlhaus_auth_key=os.environ.get("URLHAUS_AUTH_KEY", ""),
         phone_number_id=str(wa.get("phone_number_id", "") or ""),
         graph_api_version=str(wa.get("graph_api_version", "v23.0") or "v23.0"),
-        intake_enabled=bool((raw.get("bot") or {}).get("intake_enabled", False)),
+        intake_enabled=_reply_mode(raw) != "off",
+        bot_reply_mode=_reply_mode(raw),
+        bot_approve_timeout_minutes=max(5, int((raw.get("bot") or {}).get("approve_timeout_minutes", 30))),
         faq_auto_send=bool((raw.get("bot") or {}).get("faq_auto_send", False)),
         drafts_enabled=bool((raw.get("bot") or {}).get("drafts_enabled", True)),
         drafts_model=str((raw.get("bot") or {}).get("drafts_model", "claude-sonnet-5-5")),

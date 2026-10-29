@@ -24,6 +24,7 @@ HELP = (
     "/cari &lt;nama atau nomor&gt; – cari kontak\n"
     "/spam – pesan yang diduga spam (tidak dibalas bot)\n"
     "/janji – janji yang kamu tulis ke klien (\"besok saya kirim\") dan belum ditandai selesai\n"
+    "/bot – status bot WhatsApp · supervisor: /bot mati atau /bot cek\n"
     "/hapus &lt;nomor&gt; – supervisor: hapus semua data satu nomor (permintaan klien)\n"
     "/bantuan – pesan ini\n\n"
     "Tombol di notifikasi:\n"
@@ -98,6 +99,14 @@ class Bot:
                 self.channel.answer_callback(cq["id"], "✅ Diteruskan ke admin sebagai chat biasa.")
             else:
                 self.channel.answer_callback(cq["id"], "Sudah ditangani.")
+            return
+        if action in ("bok", "bno"):
+            svc = getattr(self, "service", None)
+            if not actor.startswith("spv:") or not svc or not extra.isdigit():
+                self.channel.answer_callback(cq["id"], "Hanya supervisor yang menyetujui balasan bot.")
+                return
+            fn = svc.intake.approve if action == "bok" else svc.intake.reject
+            self.channel.answer_callback(cq["id"], fn(int(extra), self._name(actor), at))
             return
         if action in ("pdone", "psnooze"):
             svc = getattr(self, "service", None)
@@ -204,6 +213,8 @@ class Bot:
             self.channel.send(chat_id, self.notifier.queue_text(key, now))
         elif cmd == "/semua":
             self.channel.send(chat_id, self.notifier.queue_text(None, now))
+        elif cmd == "/bot":
+            self.channel.send(chat_id, self.bot_mode_command(actor, arg.strip().lower()))
         elif cmd == "/janji":
             if self.service is None:
                 self.channel.send(chat_id, "Fitur ini belum aktif.")
@@ -238,6 +249,25 @@ class Bot:
         elif cmd == "/cari":
             self.channel.send(chat_id, self.search(arg.strip(), now))
         self.store.audit(actor, "command", None, cmd)
+
+    def bot_mode_command(self, actor: str, arg: str) -> str:
+        """/bot shows the WhatsApp bot mode; supervisors can switch it off or to approval.
+        Fully automatic replies can only be switched on from the settings page on the host."""
+        from .approvals import MODE_LABELS, effective_mode
+        target = {"mati": "off", "off": "off", "cek": "approve", "setuju": "approve", "approve": "approve"}.get(arg)
+        if arg and target is None and arg in ("otomatis", "auto", "on", "nyala"):
+            return "Mode otomatis hanya bisa dinyalakan dari halaman Pengaturan (bagian 7)."
+        if target:
+            if not actor.startswith("spv:"):
+                return "Hanya supervisor yang bisa mengubah mode bot."
+            self.store.set_kv("bot_reply_mode", target)
+            self.store.audit(actor, "bot_mode", None, {"mode": target})
+            return f"🤖 Bot WhatsApp sekarang: <b>{MODE_LABELS[target]}</b>."
+        mode = effective_mode(self.cfg, self.store)
+        pending = self.store.one("SELECT COUNT(*) n FROM bot_outbox WHERE status='pending'")["n"]
+        return (f"🤖 Bot WhatsApp: <b>{MODE_LABELS[mode]}</b>" + (f" · {pending} balasan menunggu persetujuan" if pending else "")
+                + ("" if self.cfg.live else "\nMode uji (Shadow/Review): tidak ada pesan yang sampai ke klien.")
+                + "\nUbah: /bot mati · /bot cek (supervisor)")
 
     def search(self, q: str, now: dt.datetime) -> str:
         if not q:
