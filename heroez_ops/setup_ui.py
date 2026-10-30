@@ -1,8 +1,12 @@
-"""Local settings page (Bahasa Indonesia) at http://127.0.0.1:8788.
+"""Settings page (Bahasa Indonesia) at http://127.0.0.1:8788.
 
-Bound to 127.0.0.1 only and never exposed through the tunnel. Lets a
-non-technical owner enter Telegram IDs, tokens and business hours without
+Lets a non-technical owner enter Telegram IDs, tokens and business hours without
 touching files. Saving validates the config, writes it, then restarts the service.
+
+* Windows host PC: opened on that PC only (127.0.0.1).
+* Web app on a server: also reachable at its own address (server.settings_hostname,
+  routed by the Cloudflare Tunnel). There it needs the owner password AND, once Cloudflare
+  Access is set up, a Cloudflare Access login with one of access.owner_emails.
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import html
 import json
 import secrets as pysecrets
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -30,6 +35,8 @@ from .db import Store
 
 MAX_ADMINS, MAX_SPV = 6, 4
 DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+RESET_HINT = ("Administrator Windows: Start menu → “Reset password Heroez Ops”." if sys.platform == "win32" else
+              "Di server jalankan: docker compose exec app heroez-ops reset-password")
 
 
 
@@ -49,6 +56,35 @@ class SetupUI:
         self.owner = OwnerAuth(home, store)
         self.owner.apply_reset_flag()
         self.owner.apply_initial_password()
+        self._verifier = None
+
+    # -- web app: the settings page at its own public address --------------------
+    def settings_host(self) -> str:
+        try:
+            return str((self.raw().get("server") or {}).get("settings_hostname", "") or "").strip().lower()
+        except Exception:
+            return ""
+
+    def owner_access(self) -> tuple[str, str, list[str]]:
+        acc = self.raw().get("access") or {}
+        return (str(acc.get("team_domain", "") or ""), str(acc.get("audience", "") or ""),
+                [str(m).lower() for m in acc.get("owner_emails") or [] if str(m).strip()])
+
+    def remote_gate(self, request: Request) -> HTMLResponse | None:
+        """Opened through the public settings address: require a Cloudflare Access login with an owner email
+        (when Access is set up). The owner password is asked in addition, always."""
+        team, aud, owners = self.owner_access()
+        if not (team and aud and owners):
+            return None                      # bootstrap: password only; the page shows a warning until Access is set
+        from .webauth import AccessVerifier
+        if not self._verifier or self._verifier[0] != (team, aud):
+            self._verifier = ((team, aud), AccessVerifier(team, aud))
+        token = request.headers.get("cf-access-jwt-assertion") or request.cookies.get("CF_Authorization")
+        email = self._verifier[1].email(token) if token else None
+        if email and email in owners:
+            return None
+        self.store.audit(email or "anonymous", "settings_denied", None, {"host": request.headers.get("host", "")})
+        return HTMLResponse("Halaman Pengaturan hanya untuk email pemilik (login lewat Cloudflare Access).", status_code=403)
 
     # -- data -----------------------------------------------------------
     def raw(self) -> dict:
@@ -84,6 +120,8 @@ class SetupUI:
         raw["mode"] = g("mode") if g("mode") in ("shadow", "review", "live") else "shadow"
         raw.setdefault("whatsapp", {})["business_number"] = "".join(ch for ch in g("business_number") if ch.isdigit())
         raw.setdefault("server", {})["public_hostname"] = g("public_hostname").removeprefix("https://").strip("/")
+        if "settings_hostname" in form:
+            raw["server"]["settings_hostname"] = g("settings_hostname").removeprefix("https://").strip("/").lower()
 
         spvs = []
         for j in range(1, MAX_SPV + 1):
@@ -134,6 +172,8 @@ class SetupUI:
         acc = raw.setdefault("access", {})
         acc["team_domain"] = g("access_team").removeprefix("https://").strip("/")
         acc["audience"] = g("access_aud")
+        if "owner_emails" in form:
+            acc["owner_emails"] = [m.strip().lower() for m in g("owner_emails").replace(";", ",").split(",") if "@" in m]
 
         esc = raw.setdefault("escalation", {})
         for k, field in (("nudge", "nudge_assignee_after_business_min"), ("group", "alert_group_after_business_min"),
@@ -239,6 +279,17 @@ class SetupUI:
             bot_modes += (f'<p class="muted">⚠️ Saat ini diubah lewat Telegram (/bot) menjadi <b>{_e(override)}</b>. '
                           f'Menyimpan halaman ini mengembalikannya ke pilihan di atas.</p>')
         webhook_url = f"https://{_e(host)}/webhook/meta" if host else "(isi alamat publik dulu)"
+        sh = (raw.get("server") or {}).get("settings_hostname", "")
+        team, aud, owners = self.owner_access()
+        if sh and not (team and aud and owners):
+            where = (f'<div class="msg bad">⚠️ Halaman ini bisa dibuka dari internet di <b>{_e(sh)}</b> dan saat ini hanya dilindungi password. '
+                     f'Atur Cloudflare Access untuk alamat ini dan isi <b>email pemilik</b> di bagian 8 '
+                     f'(lihat docs/SETUP_SERVER.md).</div>')
+        elif sh:
+            where = (f'<p class="muted">Bisa dibuka di https://{_e(sh)} oleh email pemilik '
+                     f'({_e(", ".join(owners))}) dengan password.</p>')
+        else:
+            where = '<p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>'
         ai_cfg = raw.get("ai") or {}
         calls, usd = month_cost(self.store)
         if not sec.get("ANTHROPIC_API_KEY"):
@@ -255,7 +306,7 @@ class SetupUI:
         return f"""<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Heroez Ops Settings</title><style>{CSS}</style></head><body>
 <nav><b>Heroez Ops</b><a href="/kontrak">Kontrak</a><a href="/template">Template</a><a href="/pengetahuan">Pengetahuan</a><a href="/" class="on">Pengaturan</a><span class="who"><a href="/logout">Keluar</a></span></nav><main>
-<h1>Heroez Ops: Pengaturan</h1><p class="muted">Halaman ini hanya bisa dibuka dari komputer ini.</p>{msg}
+<h1>Heroez Ops: Pengaturan</h1>{where}{msg}
 <div class="card"><h2>Status</h2>
 <p>Mode: <b>{ {"live": "LIVE (notifikasi dikirim)", "review": "UJI COBA (notifikasi hanya ke supervisor)"}.get(raw.get("mode"), "SHADOW (hanya dicatat, belum dikirim)") }</b><br>
 Pesan WhatsApp terakhir masuk: <b>{ago(st.get("last_webhook_at", 0))}</b><br>
@@ -327,6 +378,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 <input type="text" name="access_aud" value="{_e((raw.get("access") or {}).get("audience", ""))}">
 <p class="muted">Tanpa ini, halaman Kontrak hanya bisa dibuka dari komputer ini. Halaman kontrak dari laptop lain:
 <code>https://{_e(host) or "alamat-publik"}/kontrak</code></p>
+<label>Email pemilik <small>(boleh membuka halaman Pengaturan lewat internet; pisahkan dengan koma)</small></label>
+<input type="text" name="owner_emails" value="{_e(", ".join((raw.get("access") or {}).get("owner_emails") or []))}" placeholder="pemilik@heroez.id">
 <label>Tahap deal <small>(urut, pisahkan dengan koma; "Batal" selalu ada)</small></label>
 <input type="text" name="deal_stages" value="{_e(", ".join((raw.get("deals") or {}).get("stages") or ["Lead", "Proposal", "Deal", "Kontrak", "Ditandatangani", "Lunas"]))}">
 <label>Google Sheet deal: alamat web app Apps Script <small>(lihat docs/deals_sheet.gs; kosong = tidak dikirim)</small></label>
@@ -339,6 +392,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 <label>Phone number ID <small>(Meta app → WhatsApp → API Setup; untuk bot)</small></label><input type="text" name="phone_number_id" value="{_e((raw.get("whatsapp") or {}).get("phone_number_id", ""))}">
 <label>Meta access token <small>(System user token, permanen · {has("META_ACCESS_TOKEN")})</small></label><input type="password" name="meta_access_token" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">
+<label>Alamat halaman Pengaturan <small>(hanya versi server/web app, mis. opsadmin.heroez.id; kosong = hanya dari komputer ini)</small></label>
+<input type="text" name="settings_hostname" value="{_e((raw.get("server") or {}).get("settings_hostname", ""))}">
 <label>Cloudflare Tunnel token <small>· {has("CLOUDFLARE_TUNNEL_TOKEN")}</small></label><input type="password" name="tunnel_token" autocomplete="off">
 <label>URLhaus Auth-Key <small>(opsional, gratis di auth.abuse.ch: cek link berbahaya tanpa membukanya · {has("URLHAUS_AUTH_KEY")})</small></label><input type="password" name="urlhaus_key" autocomplete="off"></div>
 
@@ -375,18 +430,30 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
         app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
         allowed_hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}", "127.0.0.1", "localhost", "testserver"}
 
+        def remote(request: Request) -> bool:
+            """Opened through the public settings address (web app on a server)."""
+            sh = self.settings_host()
+            return bool(sh) and request.headers.get("host", "").lower() == sh
+
         @app.middleware("http")
         async def local_only(request: Request, call_next):
-            # Blocks DNS rebinding for every page on this local app, including the contract pages.
-            if request.headers.get("host", "") not in allowed_hosts:
+            # Blocks DNS rebinding for every page on this app, including the contract pages.
+            is_remote = remote(request)
+            if request.headers.get("host", "") not in allowed_hosts and not is_remote:
                 return HTMLResponse("Forbidden", status_code=403)
             if request.method == "POST":
                 # Only pages served from this exact origin may post here (blocks other localhost ports/sites).
                 origin = request.headers.get("origin")
                 site = request.headers.get("sec-fetch-site")
-                if (origin and origin not in {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}) or \
-                        (site and site not in ("same-origin", "none")):
+                origins = {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}
+                if is_remote:
+                    origins.add(f"https://{self.settings_host()}")
+                if (origin and origin not in origins) or (site and site not in ("same-origin", "none")):
                     return HTMLResponse("Forbidden", status_code=403)
+            if is_remote:
+                denied = self.remote_gate(request)
+                if denied is not None:
+                    return denied
             # Password every time: no valid session -> login page (except the login page itself).
             if request.url.path not in ("/login", "/logout") and not self.owner.valid(request.cookies.get(COOKIE)):
                 from urllib.parse import quote
@@ -396,8 +463,7 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
         def login_page(message: str = "", nxt: str = "/") -> str:
             first = not self.owner.has_password()
             title = "Masuk"
-            intro = ("Belum ada password pemilik. Jalankan Start menu → “Reset password Heroez Ops” (administrator Windows) "
-                     "untuk membuat password awal." if first else
+            intro = (f"Belum ada password pemilik. {RESET_HINT}" if first else
                      "Halaman ini hanya untuk pemilik/pengelola komputer server. Password diminta setiap kali.")
             extra = ""
             msg = f'<div class="msg bad">{_e(message)}</div>' if message else ""
@@ -408,7 +474,7 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
                     f'<input type="hidden" name="csrf" value="{self.csrf}"><input type="hidden" name="next" value="{_e(nxt)}">'
                     f'<label>Password</label><input type="password" name="password" required minlength="8" autofocus>{extra}'
                     f'<br><br><button type="submit">{title}</button></form></div>'
-                    f'<p class="muted">Lupa password? Administrator Windows: Start menu → “Reset password Heroez Ops”.</p>'
+                    f'<p class="muted">Lupa password? {RESET_HINT}</p>'
                     f'</main></body></html>')
 
         @app.get("/login", response_class=HTMLResponse)
@@ -426,7 +492,7 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
             pw = form.get("password", "")
             self.owner.apply_initial_password()
             if not self.owner.has_password():
-                return HTMLResponse(login_page("Belum ada password pemilik. Jalankan “Reset password Heroez Ops” dulu.", nxt),
+                return HTMLResponse(login_page(f"Belum ada password pemilik. {RESET_HINT}", nxt),
                                     status_code=403)
             if self.owner.locked():
                 return HTMLResponse(login_page("Terlalu banyak percobaan salah. Coba lagi 5 menit lagi.", nxt), status_code=429)
@@ -434,7 +500,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
                 return HTMLResponse(login_page("Password salah.", nxt), status_code=401)
             resp = RedirectResponse(nxt, status_code=303)
             # No max-age: the cookie ends when the browser closes.
-            resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/")
+            resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/",
+                            secure=remote(request))
             return resp
 
         @app.post("/password", response_class=HTMLResponse)
@@ -463,8 +530,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
             app.include_router(extra_router)
 
         def guard(request: Request) -> None:
-            # Blocks DNS-rebinding: the page must be opened as 127.0.0.1/localhost.
-            if request.headers.get("host", "") not in allowed_hosts:
+            # Blocks DNS-rebinding: the page must be opened as 127.0.0.1/localhost (or the settings address).
+            if request.headers.get("host", "") not in allowed_hosts and not remote(request):
                 raise HTTPException(403)
 
         async def form_of(request: Request) -> dict:

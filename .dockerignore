@@ -1,0 +1,13 @@
+.git
+.venv
+.github
+**/__pycache__
+*.pyc
+data
+logs
+tests
+docs
+examples
+packaging
+deploy/.sandbox-ca.crt
+.env*

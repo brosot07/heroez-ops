@@ -45,13 +45,14 @@ See `docs/SETUP_WINDOWS.md`. The installer is built by `.github/workflows/window
 on a Windows runner (PyInstaller + WinSW service + bundled cloudflared + Inno Setup).
 Settings page: http://127.0.0.1:8788 (local only). Data: `C:\ProgramData\HeroezOps`.
 
-## Deploy on a Linux server (alternative)
+## Web app on a Linux server (recommended)
+One container runs everything and is reached only through a Cloudflare Tunnel (no open ports, no `.env`):
 ```bash
-cp .env.example .env   # fill in secrets
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml run --rm app heroez-ops init   # tunnel token, addresses, first password
+docker compose -f deploy/docker-compose.yml up -d
 ```
-Point Meta's webhook to `https://$DOMAIN/webhook/meta` and Telegram's to `https://$DOMAIN/webhook/telegram`.
-Add a free uptime monitor on `https://$DOMAIN/health` that alerts management after 10 minutes.
+Then open the settings address in a browser and enter the remaining keys there. Step by step: `docs/SETUP_SERVER.md`.
 
 ## Layout
 `heroez_ops/sources/` inbox adapters (`InboxSource`), `alerts/` channels (`AlertChannel`),
