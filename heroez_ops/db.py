@@ -276,6 +276,19 @@ CREATE TABLE IF NOT EXISTS bot_outbox (
     cards TEXT                               -- JSON [[chat_id, message_id], ...]
 );
 CREATE INDEX IF NOT EXISTS bot_outbox_pending ON bot_outbox(status, wa_id);
+CREATE TABLE IF NOT EXISTS doc_numbers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT NOT NULL UNIQUE,
+    doc_type TEXT NOT NULL,                  -- kontrak | spk | ...
+    seq INTEGER,
+    period TEXT,                             -- 2026 | 2026-11 | all
+    source TEXT NOT NULL,                    -- app | manual | external
+    status TEXT NOT NULL,                    -- used | batal
+    document_id INTEGER,                     -- contracts.id when made in the app
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    created_by TEXT
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -310,6 +323,13 @@ class Store:
             ("triage_since", "INTEGER"),                   # waiting for a supervisor to pick the admin
         ],
         "talents": [("calendar_url", "TEXT")],                # private: the KOL's own iCal address
+        "contract_templates": [("doc_type", "TEXT NOT NULL DEFAULT 'kontrak'")],
+        "contracts": [
+            ("doc_type", "TEXT NOT NULL DEFAULT 'kontrak'"),
+            ("batch_id", "INTEGER"),                       # SPK batch (one job → one SPK per talent)
+            ("talent", "TEXT"),                            # SPK: the talent this document is for
+            ("status", "TEXT NOT NULL DEFAULT 'aktif'"),   # aktif | batal
+        ],
         "talent_busy": [("source", "TEXT NOT NULL DEFAULT 'upload'")],   # upload | calendar
     }
 

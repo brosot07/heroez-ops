@@ -181,3 +181,29 @@ def test_zip_bomb_upload_refused(setup):
         z.writestr("word/document.xml", b"\0" * (30 * 1024 * 1024))
     r = client.post("/template/upload", data={"csrf": ui.csrf, "name": "bomb"}, files={"file": ("b.docx", buf.getvalue())})
     assert r.status_code == 400 and "terlalu besar" in r.text
+
+
+def test_numbers_page_continue_from_last_and_register(setup):
+    ui, client = setup
+    page = client.get("/nomor").text
+    assert "Kontrak" in page and "SPK" in page and "berikutnya" in page
+    assert client.post("/nomor/terakhir", data={"csrf": ui.csrf, "key": "kontrak", "last": "47"},
+                       follow_redirects=False).status_code == 303
+    tid = upload_and_wait(ui, client)
+    client.post(f"/template/{tid}/setujui", data={"csrf": ui.csrf})
+    form = client.get(f"/kontrak/baru?t={tid}").text
+    number = re.search(r'name="f_contract_number" value="([^"]+)"', form).group(1)
+    assert number.startswith("048/HRZ-KTR/")
+    r = client.post("/kontrak/simpan", data={
+        "csrf": ui.csrf, "tid": tid, "cid": 0, "f_client_name": "PT A", "f_client_address": "Jl. X", "f_fee_total": "10jt",
+        "f_sign_date": "2026-11-10", "f_contract_number": number, "r_talent_0": "Dewi", "r_platform_0": "IG", "r_fee_0": "10jt"},
+        follow_redirects=False)
+    cid = int(r.headers["location"].rsplit("/", 1)[1])
+    row = ui.store.one("SELECT * FROM doc_numbers WHERE number=?", (number,))
+    assert row["document_id"] == cid and row["source"] == "app" and row["doc_type"] == "kontrak"
+    # Typing a number that is already used is refused with a message, not a crash
+    r = client.post("/kontrak/simpan", data={
+        "csrf": ui.csrf, "tid": tid, "cid": 0, "f_client_name": "PT B", "f_client_address": "Jl. Y", "f_fee_total": "5jt",
+        "f_sign_date": "2026-11-10", "f_contract_number": number, "r_talent_0": "Raka", "r_platform_0": "IG", "r_fee_0": "5jt"})
+    assert "sudah dipakai" in r.text
+    assert ui.store.one("SELECT COUNT(*) n FROM contracts")["n"] == 1

@@ -84,10 +84,10 @@ class ContractsUI:
 
     def router(self, local: bool) -> APIRouter:
         r = APIRouter()
-        nav = ([("Antrian", "/antrian"), ("Deal", "/deal"), ("Kontrak", "/kontrak"), ("Template", "/template"),
-                ("Pengetahuan", "/pengetahuan"), ("Pengaturan", "/")] if local
-               else [("Antrian", "/antrian"), ("Deal", "/deal"), ("Kontrak", "/kontrak"), ("Template", "/template"),
-                     ("Pengetahuan", "/pengetahuan")])
+        nav = ([("Antrian", "/antrian"), ("Deal", "/deal"), ("SPK", "/spk"), ("Kontrak", "/kontrak"), ("Template", "/template"),
+                ("Nomor", "/nomor"), ("Pengetahuan", "/pengetahuan"), ("Pengaturan", "/")] if local
+               else [("Antrian", "/antrian"), ("Deal", "/deal"), ("SPK", "/spk"), ("Kontrak", "/kontrak"), ("Template", "/template"),
+                     ("Nomor", "/nomor"), ("Pengetahuan", "/pengetahuan")])
 
         async def who(request: Request) -> User:
             user = OWNER if local else remote_user(request, self.cfg(), self.verifier())
@@ -103,9 +103,10 @@ class ContractsUI:
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
             return HTMLResponse(page(title, body, nav, active, user.name, message, ok, logout=local))
 
-        from . import deals_ui, kb_ui
+        from . import deals_ui, kb_ui, numbering_ui
         kb_ui.add_routes(r, self, who, form, show)
         deals_ui.add_routes(r, self, who, form, show)
+        numbering_ui.add_routes(r, self, who, form, show)
 
         # -- queue ----------------------------------------------------------
         @r.get("/antrian", response_class=HTMLResponse)
@@ -186,7 +187,12 @@ class ContractsUI:
                 values = {k[2:]: v for k, v in f.items() if k.startswith("f_")}
                 return show("Kontrak", self.contract_form(tpl, values, self._rows_from_form(spec, f), None), user,
                             "/kontrak", str(ex), ok=False)
-            cid = self.store_contract(tpl, values, rows, user, cid, deal_id=int(f.get("deal_id") or 0) or None)
+            from .numbering import NumberError
+            try:
+                cid = self.store_contract(tpl, values, rows, user, cid, deal_id=int(f.get("deal_id") or 0) or None)
+            except NumberError as ex:
+                return show("Kontrak", self.contract_form(tpl, values, rows, self._contract(cid) if cid else None), user,
+                            "/kontrak", str(ex), ok=False)
             return RedirectResponse(f"/kontrak/{cid}", status_code=303)
 
         @r.get("/kontrak/{cid}", response_class=HTMLResponse)
@@ -235,8 +241,11 @@ class ContractsUI:
         @r.get("/template", response_class=HTMLResponse)
         def templates(user: User = Depends(who)):
             rows = self.store.q("SELECT * FROM contract_templates WHERE status!='archived' ORDER BY id DESC")
-            table = "".join(f'<tr><td><a href="/template/{t["id"]}">{e(t["name"])}</a></td><td>{STATUS_LABELS.get(t["status"], t["status"])}</td>'
-                            f'<td>{e(t["approved_by"] or "")}</td></tr>' for t in rows) or '<tr><td colspan="3" class="muted">Belum ada template.</td></tr>'
+            types = self.numbering().types()
+            table = "".join(f'<tr><td><a href="/template/{t["id"]}">{e(t["name"])}</a></td>'
+                            f'<td>{e(types.get(self.doc_type(t), {}).get("label", self.doc_type(t)))}</td>'
+                            f'<td>{STATUS_LABELS.get(t["status"], t["status"])}</td>'
+                            f'<td>{e(t["approved_by"] or "")}</td></tr>' for t in rows) or '<tr><td colspan="4" class="muted">Belum ada template.</td></tr>'
             upload = ""
             if user.can_manage_templates:
                 upload = (f'<div class="card"><h2>Upload template yang sudah disetujui legal</h2>'
@@ -245,9 +254,13 @@ class ContractsUI:
                           f'<form method="post" action="/template/upload" enctype="multipart/form-data">'
                           f'<input type="hidden" name="csrf" value="{self.csrf}">'
                           f'<label>Nama template</label><input type="text" name="name" required placeholder="Perjanjian Kampanye Brand v2026">'
+                          f'<label>Jenis dokumen <small>(menentukan penomoran)</small></label><select name="doc_type">'
+                          + "".join(f'<option value="{e(k)}">{e(v["label"])}</option>' for k, v in self.numbering().types().items())
+                          + '</select>'
                           f'<label>File .docx</label><input type="file" name="file" accept=".docx" required><br><br>'
                           f'<button type="submit">Upload & baca dengan AI</button></form></div>')
-            body = f'<h1>Template kontrak</h1><div class="card"><table><tr><th>Nama</th><th>Status</th><th>Disetujui oleh</th></tr>{table}</table></div>{upload}'
+            body = (f'<h1>Template dokumen</h1><div class="card"><table><tr><th>Nama</th><th>Jenis</th><th>Status</th>'
+                    f'<th>Disetujui oleh</th></tr>{table}</table></div>{upload}')
             return show("Template", body, user, "/template")
 
         @r.post("/template/upload")
@@ -266,8 +279,11 @@ class ContractsUI:
                 dtp.load(data)
             except Exception as ex:
                 raise HTTPException(400, "File tidak bisa dibaca sebagai dokumen Word (.docx).") from ex
-            tid = self.store.x("INSERT INTO contract_templates(name,status,created_at,created_by) VALUES(?,?,?,?)",
-                               (str(f.get("name") or file.filename)[:120], "analyzing", int(time.time()), user.key)).lastrowid
+            dtype = str(f.get("doc_type") or "kontrak")
+            if dtype not in self.numbering().types():
+                raise HTTPException(400, "Jenis dokumen tidak dikenal.")
+            tid = self.store.x("INSERT INTO contract_templates(name,status,created_at,created_by,doc_type) VALUES(?,?,?,?,?)",
+                               (str(f.get("name") or file.filename)[:120], "analyzing", int(time.time()), user.key, dtype)).lastrowid
             d = self.tdir / str(tid)
             d.mkdir(parents=True, exist_ok=True)
             (d / "original.docx").write_bytes(data)
@@ -537,18 +553,32 @@ class ContractsUI:
                 f'<p>{actions}</p>')
 
     # -- contract form ------------------------------------------------------------
-    def next_number(self, consume: bool) -> str:
+    def numbering(self):
+        from .numbering import Numbering
         c = self.cfg()
-        now = dt.datetime.now(c.tz)
-        key = f"contract_seq:{now.year}"
-        seq = int(self.store.get_kv(key, "0") or 0) + 1
-        if consume:
-            self.store.set_kv(key, str(seq))
-        try:
-            return c.contract_number_format.format(seq=seq, year=now.year, month=f"{now.month:02d}",
-                                                   roman_month=ROMAN[now.month - 1])
-        except (KeyError, ValueError, IndexError):
-            return f"{seq:03d}/{ROMAN[now.month - 1]}/{now.year}"
+        return Numbering(self.store, c.tz, c.contract_number_format)
+
+    @staticmethod
+    def doc_type(tpl) -> str:
+        return (tpl["doc_type"] if "doc_type" in tpl.keys() else None) or "kontrak"
+
+    def next_number(self, consume: bool, doc_type: str = "kontrak", who: str = "system") -> str:
+        """Preview (consume=False) or issue the next number of this document type."""
+        n = self.numbering()
+        return n.take(doc_type, who) if consume else n.peek(doc_type)
+
+    def assign_number(self, tpl, typed: str, user: User, cid: int, note: str) -> str:
+        """The number a saved document gets: the next one, or one typed by hand (checked against the register)."""
+        n, dtype = self.numbering(), self.doc_type(tpl)
+        typed = (typed or "").strip()
+        if cid:
+            current = self._contract(cid)["number"]
+            if not typed or typed == current:
+                return current
+            return n.claim(dtype, typed, user.key, document_id=cid, note=note)
+        if not typed or typed == n.peek(dtype):
+            return n.take(dtype, user.key, note=note)
+        return n.claim(dtype, typed, user.key, note=note)
 
     def contract_form(self, tpl, values: dict, rows: list[dict], existing) -> str:
         spec = json.loads(tpl["spec"])
@@ -558,7 +588,7 @@ class ContractsUI:
                 continue
             k, v = fd["key"], values.get(fd["key"], "")
             if fd["type"] == "contract_number" and not v:
-                v = self.next_number(consume=False)
+                v = self.next_number(consume=False, doc_type=self.doc_type(tpl))
             if fd["type"] == "money" and isinstance(v, int):
                 v = f"{v:,}".replace(",", ".") if v else ""
             if fd["type"] == "longtext":
@@ -682,13 +712,11 @@ class ContractsUI:
         spec = json.loads(tpl["spec"])
         now = int(time.time())
         num_fd = next((fd for fd in spec["fields"] if fd["type"] == "contract_number"), None)
-        if num_fd:
-            if values.get(num_fd["key"]) in ("", self.next_number(consume=False)) and not cid:
-                values[num_fd["key"]] = self.next_number(consume=True)
-            number = values[num_fd["key"]]
-        else:
-            number = self.next_number(consume=not cid) if not cid else self._contract(cid)["number"]
         client = next((values.get(fd["key"]) for fd in spec["fields"] if fd["group"] == "client" and fd["type"] == "text"), "")
+        number = self.assign_number(tpl, values.get(num_fd["key"], "") if num_fd else "", user, cid,
+                                    note=f"{tpl['name']} · {client or ''}".strip(" ·"))
+        if num_fd:
+            values[num_fd["key"]] = number
         totals = [values.get(fd["key"]) for fd in spec["fields"] if fd["type"] == "money" and self._auto_kind(fd["key"]) in ("grand", "total")]
         total = next((t for t in reversed(totals) if t), None)
         data = json.dumps({"values": values, "rows": rows}, ensure_ascii=False, default=str)
@@ -696,8 +724,10 @@ class ContractsUI:
             self.store.x("UPDATE contracts SET number=?, client_name=?, total=?, data=?, updated_at=?, updated_by=? WHERE id=?",
                          (number, client, total, data, now, user.name, cid))
         else:
-            cid = self.store.x("INSERT INTO contracts(template_id,number,client_name,total,data,created_at,created_by,updated_at) "
-                               "VALUES(?,?,?,?,?,?,?,?)", (tpl["id"], number, client, total, data, now, user.name, now)).lastrowid
+            cid = self.store.x("INSERT INTO contracts(template_id,number,client_name,total,data,created_at,created_by,updated_at,doc_type) "
+                               "VALUES(?,?,?,?,?,?,?,?,?)", (tpl["id"], number, client, total, data, now, user.name, now,
+                                                            self.doc_type(tpl))).lastrowid
+        self.store.x("UPDATE doc_numbers SET document_id=? WHERE number=? AND document_id IS NULL", (cid, number))
         template = (self.tdir / str(tpl["id"]) / "template.docx").read_bytes()
         self.cdir.mkdir(parents=True, exist_ok=True)
         (self.cdir / f"{cid}.docx").write_bytes(dtp.render(template, spec, values, rows))

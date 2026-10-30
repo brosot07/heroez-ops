@@ -163,8 +163,6 @@ class SetupUI:
         if g("send_budget").isdigit():
             b["monthly_send_budget"] = int(g("send_budget"))
         raw.setdefault("whatsapp", {})["phone_number_id"] = "".join(ch for ch in g("phone_number_id") if ch.isdigit())
-        if g("number_format"):
-            raw.setdefault("contracts", {})["number_format"] = g("number_format")
         dl = raw.setdefault("deals", {})
         dl["sheet_webhook_url"] = g("deals_sheet_url")
         if g("deal_stages"):
@@ -370,8 +368,7 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 
 <div class="card"><h2>8. Kontrak & deal</h2>
 <label style="font-weight:400"><input type="checkbox" name="pkp" {"checked" if (raw.get("tax") or {}).get("pkp") else ""}> Heroez adalah PKP (kontrak/invoice menghitung PPN 11%)</label>
-<label>Format nomor kontrak <small>({{seq:03d}} = urutan per tahun, {{roman_month}} = XI, {{year}} = 2026)</small></label>
-<input type="text" name="number_format" value="{_e((raw.get("contracts") or {}).get("number_format", "{seq:03d}/HRZ-KTR/{roman_month}/{year}"))}">
+<p class="muted">Format dan nomor terakhir untuk Kontrak, SPK, dll. diatur di halaman <a href="/nomor">Nomor</a>.</p>
 <label>Login dari laptop lain: Cloudflare Access team domain <small>(mis. heroez.cloudflareaccess.com)</small></label>
 <input type="text" name="access_team" value="{_e((raw.get("access") or {}).get("team_domain", ""))}">
 <label>Cloudflare Access Application Audience (AUD) tag</label>
