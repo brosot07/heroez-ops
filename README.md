@@ -10,6 +10,7 @@ pipeline mirrored to the ops Google Sheet.
 number. See `docs/PHASE0_REPORT.md` for open items.
 
 ## Documents
+- `docs/HANDOVER.md` — **start here** if you are taking over deployment and operation
 - `docs/SETUP_SERVER.md` — **web app on a cloud server** (recommended): server, Cloudflare, Access, install, backups
 - `docs/SETUP_WINDOWS.md` — install on a Windows host PC, Telegram, tunnel, AI, contracts, bot, deals
 - `docs/SETUP_RUNBOOK.md` — Meta app, webhook, coexistence onboarding, tokens, go-live checklist
