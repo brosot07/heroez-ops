@@ -289,6 +289,24 @@ CREATE TABLE IF NOT EXISTS doc_numbers (
     created_at INTEGER NOT NULL,
     created_by TEXT
 );
+CREATE TABLE IF NOT EXISTS spk_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,                    -- reading | review | failed
+    data TEXT NOT NULL DEFAULT '{}',         -- client, campaign, period, payment terms, rows (see spk.py)
+    notes TEXT,                              -- AI notes / problems, JSON list
+    files TEXT,                              -- JSON list of uploaded file names (kept in data/spk/<id>/)
+    deal_id INTEGER,
+    created_at INTEGER NOT NULL,
+    created_by TEXT,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS talent_profiles (
+    name_key TEXT PRIMARY KEY,               -- lower-case talent name
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,                      -- private: last values typed on an SPK (address, bank, ID...) by field key
+    updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

@@ -244,14 +244,28 @@ def render(template: bytes, spec: dict, values: dict, rows: list[dict] | None = 
         table = doc.tables[d["table"]]
         tmpl_tr = table.rows[d["template_row"]]._tr
         money_cols = {c["key"]: c.get("format") for c in d["columns"] if c.get("type") == "money"}
+        date_cols = {c["key"]: c.get("format") for c in d["columns"] if c.get("type") == "date"}
+
+        def cell_value(key: str, vals: dict) -> str | None:
+            if not key.startswith("row."):
+                return None
+            k = key[4:]
+            if k in money_cols:
+                return format_value("money", vals.get(k, 0), vals, fmt=money_cols[k])
+            if k in date_cols and vals.get(k):
+                try:
+                    return format_value("date", vals[k], vals, fmt=date_cols[k])    # same style as the template
+                except ValueError:
+                    return str(vals[k])                                              # free text like "minggu ke-3"
+            return str(vals.get(k, ""))
+
         for n, row in enumerate(rows or [], 1):
             new_tr = deepcopy(tmpl_tr)
             tmpl_tr.addprevious(new_tr)
             vals = {**row, "no": str(n)}
             for cell in _Row(new_tr, table).cells:
                 for p in cell.paragraphs:
-                    _fill(p, lambda key: format_value("money", vals.get(key[4:], 0), vals, fmt=money_cols[key[4:]])
-                          if key[4:] in money_cols else str(vals.get(key[4:], "")) if key.startswith("row.") else None)
+                    _fill(p, lambda key, vals=vals: cell_value(key, vals))
         tmpl_tr.getparent().remove(tmpl_tr)
 
     for b in blocks(doc):

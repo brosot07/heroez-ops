@@ -25,6 +25,7 @@ code{background:var(--bg);padding:2px 5px;border-radius:4px}
 mark{background:var(--hl);color:inherit;padding:0 2px;border-radius:3px}
 .doc{white-space:pre-wrap;font:14px/1.6 Georgia,serif;max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--bg)}
 .scroll{overflow-x:auto}
+@media(max-width:600px){nav{flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}nav .who{margin-left:12px}}
 """
 
 

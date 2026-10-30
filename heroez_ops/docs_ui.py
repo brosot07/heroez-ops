@@ -36,7 +36,7 @@ _csrf_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("csrf")
 
 log = logging.getLogger(__name__)
 
-GROUP_LABELS = {"client": "Data klien", "contract": "Kontrak", "campaign": "Kampanye", "sow": "Ruang lingkup (SOW)",
+GROUP_LABELS = {"client": "Data klien", "contract": "Dokumen", "campaign": "Kampanye", "sow": "Ruang lingkup (SOW)",
                 "fee": "Remunerasi", "other": "Lainnya"}
 TYPE_LABELS = {"text": "Teks", "longtext": "Teks panjang", "date": "Tanggal", "money": "Nominal (Rp)",
                "money_words": "Terbilang (otomatis)", "number": "Angka", "contract_number": "Nomor kontrak (otomatis)"}
@@ -60,6 +60,8 @@ class ContractsUI:
         self.analyzer = analyzer or (lambda data, key: contract_ai.analyze(data, key))
         from . import doc_import
         self.doc_analyzer = doc_import.analyze     # (blocks, api_key, store) -> table; tests replace it
+        from . import spk
+        self.spk_analyzer = spk.analyze            # (blocks, api_key, store) -> job data; tests replace it
         self._verifier: tuple[tuple[str, str], AccessVerifier] | None = None
 
     # -- CSRF: one token per user (and per owner session), never shared across users ---
@@ -103,7 +105,8 @@ class ContractsUI:
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
             return HTMLResponse(page(title, body, nav, active, user.name, message, ok, logout=local))
 
-        from . import deals_ui, kb_ui, numbering_ui
+        from . import deals_ui, kb_ui, numbering_ui, spk_ui
+        spk_ui.add_routes(r, self, who, form, show)
         kb_ui.add_routes(r, self, who, form, show)
         deals_ui.add_routes(r, self, who, form, show)
         numbering_ui.add_routes(r, self, who, form, show)
@@ -152,15 +155,18 @@ class ContractsUI:
             return show("Kontrak", body, user, "/kontrak")
 
         @r.get("/kontrak/baru", response_class=HTMLResponse)
-        def new_contract(t: int, dari: int = 0, user: User = Depends(who)):
+        def new_contract(t: int, dari: int = 0, job: int = 0, talent: str = "", user: User = Depends(who)):
             tpl = self._approved(t)
             values, rows = {}, []
-            if dari:
+            if job:
+                values, rows = self.job_prefill(tpl, job, talent or None)
+            elif dari:
                 c = self._contract(dari)
                 data = json.loads(c["data"])
                 values, rows = data["values"], data["rows"]
                 values.pop("contract_number", None)
-            return show("Kontrak baru", self.contract_form(tpl, values, rows, None), user, "/kontrak")
+            return show("Dokumen baru", self.contract_form(tpl, values, rows, None, job=job, talent=talent), user,
+                        "/spk" if job else "/kontrak")
 
         @r.get("/kontrak/{cid}/ubah", response_class=HTMLResponse)
         def edit_contract(cid: int, user: User = Depends(who)):
@@ -185,15 +191,20 @@ class ContractsUI:
             except ValueError as ex:
                 spec = json.loads(tpl["spec"])
                 values = {k[2:]: v for k, v in f.items() if k.startswith("f_")}
-                return show("Kontrak", self.contract_form(tpl, values, self._rows_from_form(spec, f), None), user,
+                return show("Kontrak", self.contract_form(tpl, values, self._rows_from_form(spec, f), None,
+                                                          job=int(f.get("job") or 0) if str(f.get("job") or "0").isdigit() else 0,
+                                                          talent=str(f.get("talent") or "")), user,
                             "/kontrak", str(ex), ok=False)
             from .numbering import NumberError
+            job = int(f.get("job") or 0) if str(f.get("job") or "0").isdigit() else 0
+            talent = str(f.get("talent") or "")
             try:
-                cid = self.store_contract(tpl, values, rows, user, cid, deal_id=int(f.get("deal_id") or 0) or None)
+                cid = self.store_contract(tpl, values, rows, user, cid, deal_id=int(f.get("deal_id") or 0) or None,
+                                          job=job, talent=talent)
             except NumberError as ex:
-                return show("Kontrak", self.contract_form(tpl, values, rows, self._contract(cid) if cid else None), user,
-                            "/kontrak", str(ex), ok=False)
-            return RedirectResponse(f"/kontrak/{cid}", status_code=303)
+                return show("Kontrak", self.contract_form(tpl, values, rows, self._contract(cid) if cid else None,
+                                                          job=job, talent=talent), user, "/kontrak", str(ex), ok=False)
+            return RedirectResponse(f"/spk/{job}" if job else f"/kontrak/{cid}", status_code=303)
 
         @r.get("/kontrak/{cid}", response_class=HTMLResponse)
         def view_contract(cid: int, user: User = Depends(who)):
@@ -553,6 +564,19 @@ class ContractsUI:
                 f'<p>{actions}</p>')
 
     # -- contract form ------------------------------------------------------------
+    def job_prefill(self, tpl, job: int, talent: str | None) -> tuple[dict, list[dict]]:
+        from . import spk
+        j = self.store.one("SELECT data FROM spk_jobs WHERE id=?", (job,))
+        if not j:
+            raise HTTPException(404, "Pekerjaan SPK tidak ditemukan.")
+
+        def phone_of(name: str) -> str:
+            t = self.store.one("SELECT phone FROM talents WHERE lower(name)=lower(?)", (name,))
+            return (t["phone"] or "") if t else ""
+        return spk.prefill(json.loads(tpl["spec"]), json.loads(j["data"]), talent, self.doc_type(tpl), phone_of,
+                           dt.datetime.now(self.cfg().tz).date(),
+                           profile=spk.talent_profile(self.store, talent) if talent else None)
+
     def numbering(self):
         from .numbering import Numbering
         c = self.cfg()
@@ -580,7 +604,7 @@ class ContractsUI:
             return n.take(dtype, user.key, note=note)
         return n.claim(dtype, typed, user.key, note=note)
 
-    def contract_form(self, tpl, values: dict, rows: list[dict], existing) -> str:
+    def contract_form(self, tpl, values: dict, rows: list[dict], existing, job: int = 0, talent: str = "") -> str:
         spec = json.loads(tpl["spec"])
         groups: dict[str, list[str]] = {}
         for fd in spec["fields"]:
@@ -627,19 +651,30 @@ class ContractsUI:
                    f'function addRow(){{document.querySelector("#sow tbody").insertAdjacentHTML("beforeend",tpl.replaceAll("__I__",n++));}}</script>')
         tax = "" if not any(self._auto_kind(fd["key"]) == "tax" for fd in spec["fields"]) else (
             f'<p class="muted">PPN: {"dihitung " + str(round(self.cfg().ppn_rate * 100, 2)) + "% (Heroez PKP)" if self.cfg().pkp else "0 (Heroez bukan PKP, ubah di Pengaturan)"}</p>')
-        title = f"Ubah kontrak {e(existing['number'])}" if existing else "Kontrak baru"
+        dtype = self.doc_type(tpl)
+        label = self.numbering().types().get(dtype, {}).get("label", "Dokumen")
+        if existing:
+            job, talent = existing["batch_id"] or job, existing["talent"] or talent
+        title = (f"Ubah {e(label)} {e(existing['number'])}" if existing else
+                 f"{e(label)} baru" + (f" untuk {e(talent)}" if talent else ""))
+        hidden = (f'<input type="hidden" name="job" value="{int(job or 0)}"><input type="hidden" name="talent" value="{e(talent)}">')
         from .deals import LOST
         linked = self.store.one("SELECT id FROM deals WHERE contract_id=?", (existing["id"],)) if existing else None
+        if not linked and job:
+            jd = self.store.one("SELECT deal_id FROM spk_jobs WHERE id=?", (job,))
+            linked = {"id": jd["deal_id"]} if jd and jd["deal_id"] else None
         open_deals = self.store.q("SELECT id, brand, contact_name, stage FROM deals WHERE stage!=? AND (contract_id IS NULL OR id=?) "
                                   "ORDER BY updated_at DESC LIMIT 50", (LOST, linked["id"] if linked else 0))
         opts = "".join(f'<option value="{d["id"]}"{" selected" if linked and d["id"] == linked["id"] else ""}>'
                        f'#{d["id"]} {e(d["brand"] or d["contact_name"] or "-")} · {e(d["stage"])}</option>' for d in open_deals)
         deal = (f'<div class="card"><h2>Deal terkait</h2><p class="muted">Kontrak ini memindahkan deal ke tahap Kontrak dan mengisi nilainya. '
-                f'Pilih "(buat deal baru)" bila belum ada di pipeline.</p><select name="deal_id"><option value="0">(buat deal baru)</option>{opts}</select></div>')
+                f'Pilih "(buat deal baru)" bila belum ada di pipeline.</p><select name="deal_id"><option value="0">(buat deal baru)</option>{opts}</select></div>'
+                if dtype == "kontrak" else
+                f'<input type="hidden" name="deal_id" value="{linked["id"] if linked else 0}">')
         return (f'<h1>{title}</h1><p class="muted">Template: {e(tpl["name"])}. Isi pasal tidak bisa diubah di sini.</p>'
                 f'<form method="post" action="/kontrak/simpan"><input type="hidden" name="csrf" value="{self.csrf}">'
                 f'<input type="hidden" name="tid" value="{tpl["id"]}"><input type="hidden" name="cid" value="{existing["id"] if existing else 0}">'
-                f'{cards}{sow}{tax}{deal}<button type="submit">Simpan & buat dokumen</button></form>')
+                f'{hidden}{cards}{sow}{tax}{deal}<button type="submit">Simpan & buat dokumen</button></form>')
 
     @staticmethod
     def _auto_kind(key: str) -> str | None:
@@ -708,13 +743,14 @@ class ContractsUI:
                 values[fd["key"]] = 0
         return values, rows
 
-    def store_contract(self, tpl, values: dict, rows: list[dict], user: User, cid: int = 0, deal_id: int | None = None) -> int:
+    def store_contract(self, tpl, values: dict, rows: list[dict], user: User, cid: int = 0, deal_id: int | None = None,
+                       job: int = 0, talent: str = "") -> int:
         spec = json.loads(tpl["spec"])
         now = int(time.time())
         num_fd = next((fd for fd in spec["fields"] if fd["type"] == "contract_number"), None)
         client = next((values.get(fd["key"]) for fd in spec["fields"] if fd["group"] == "client" and fd["type"] == "text"), "")
         number = self.assign_number(tpl, values.get(num_fd["key"], "") if num_fd else "", user, cid,
-                                    note=f"{tpl['name']} · {client or ''}".strip(" ·"))
+                                    note=" · ".join(x for x in (tpl["name"], (talent or "").strip(), client or "") if x))
         if num_fd:
             values[num_fd["key"]] = number
         totals = [values.get(fd["key"]) for fd in spec["fields"] if fd["type"] == "money" and self._auto_kind(fd["key"]) in ("grand", "total")]
@@ -724,14 +760,20 @@ class ContractsUI:
             self.store.x("UPDATE contracts SET number=?, client_name=?, total=?, data=?, updated_at=?, updated_by=? WHERE id=?",
                          (number, client, total, data, now, user.name, cid))
         else:
-            cid = self.store.x("INSERT INTO contracts(template_id,number,client_name,total,data,created_at,created_by,updated_at,doc_type) "
-                               "VALUES(?,?,?,?,?,?,?,?,?)", (tpl["id"], number, client, total, data, now, user.name, now,
-                                                            self.doc_type(tpl))).lastrowid
+            cid = self.store.x("INSERT INTO contracts(template_id,number,client_name,total,data,created_at,created_by,updated_at,"
+                               "doc_type,batch_id,talent) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                               (tpl["id"], number, client, total, data, now, user.name, now, self.doc_type(tpl),
+                                job or None, (talent or "").strip()[:80] or None)).lastrowid
         self.store.x("UPDATE doc_numbers SET document_id=? WHERE number=? AND document_id IS NULL", (cid, number))
         template = (self.tdir / str(tpl["id"]) / "template.docx").read_bytes()
         self.cdir.mkdir(parents=True, exist_ok=True)
         (self.cdir / f"{cid}.docx").write_bytes(dtp.render(template, spec, values, rows))
         self.store.audit(user.key, "contract_save", None, {"contract": cid, "number": number})
+        if self.doc_type(tpl) != "kontrak":
+            if talent:
+                from . import spk
+                spk.remember_talent(self.store, talent.strip(), spec, values)
+            return cid                                 # SPK etc. carry talent fees: they never set the deal value
         try:
             deals = self._deals()
             d = deals.get(deal_id) if deal_id else None
