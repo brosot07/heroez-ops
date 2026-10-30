@@ -60,3 +60,11 @@ def test_health(client):
     client.store.set_kv("last_tick_at", str(__import__("time").time().__int__()))
     r = client.get("/health")
     assert r.status_code == 200 and r.json() == {"ok": True}        # nothing else is revealed publicly
+
+
+def test_shipped_default_config_matches_the_repo_config():
+    """The installer and server copy heroez_ops/defaults/config.yaml; it must not drift from config/config.yaml."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    assert (root / "heroez_ops" / "defaults" / "config.yaml").read_text(encoding="utf-8") == \
+        (root / "config" / "config.yaml").read_text(encoding="utf-8")
