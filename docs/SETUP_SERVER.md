@@ -82,8 +82,19 @@ the pages. The settings page additionally allows only the **owner emails** and a
 
 ## 5. Install and start the app
 
+The repository is private, so the server gets its own **read-only deploy key** (it can download this one
+repository and nothing else). Make the key on the server:
 ```bash
-git clone https://github.com/brosot07/heroez-ops.git /opt/heroez-ops
+ssh-keygen -t ed25519 -N "" -C heroez-server -f /root/.ssh/heroez_deploy && cat /root/.ssh/heroez_deploy.pub
+```
+Copy the line it prints (starts with `ssh-ed25519`). On GitHub: the repository → **Settings** → **Deploy keys** →
+**Add deploy key** → title `heroez-server`, paste the line, leave **Allow write access unticked** → Add key.
+Then tell git on the server to use it, and download the code:
+```bash
+printf 'Host github.com\n  IdentityFile /root/.ssh/heroez_deploy\n  IdentitiesOnly yes\n' >> /root/.ssh/config && ssh-keyscan github.com >> /root/.ssh/known_hosts
+```
+```bash
+git clone git@github.com:brosot07/heroez-ops.git /opt/heroez-ops
 ```
 ```bash
 cd /opt/heroez-ops && docker compose -f deploy/docker-compose.yml build
@@ -146,6 +157,7 @@ Settings, keys and data are kept (they live in the `heroez_data` Docker volume).
 | Settings page unreachable | `docker compose -f deploy/docker-compose.yml logs --tail 50 app`; Cloudflare → Tunnels shows *Healthy*? |
 | Forgot the owner password | `docker compose -f deploy/docker-compose.yml exec app heroez-ops reset-password` prints a one-time password |
 | "belum terdaftar sebagai admin/supervisor" | add that person's email in settings sections 3–4 |
-| Moving to another server | install on the new one, restore a backup (§8), re-enter the keys, point the tunnel token at it |
+| Moving to another server | new deploy key (§5), install, restore a backup (§8), re-enter the keys, same tunnel token |
+| `Permission denied (publickey)` on git | the deploy key is missing on GitHub (repository → Settings → Deploy keys) or `/root/.ssh/config` was not written |
 
 If the server is down, WhatsApp keeps working normally; only reminders, the bot and the web pages pause.
