@@ -113,3 +113,19 @@ def test_init_and_reset_password(tmp_path, capsys):
     ui.owner.apply_reset_flag()
     ui.owner.apply_initial_password()
     assert ui.owner.check_password(new) and not ui.owner.check_password(pw)
+
+
+def test_owner_can_download_a_backup_without_keys(tmp_path):
+    import io
+    import zipfile
+    ui = make_ui(tmp_path)
+    secretstore.save(tmp_path / "secrets.bin", {"TELEGRAM_BOT_TOKEN": "123:abc"})
+    (tmp_path / "data" / "contracts").mkdir(parents=True)
+    (tmp_path / "data" / "contracts" / "1.docx").write_bytes(b"doc")
+    c = client_for(ui)
+    assert c.get("/cadangan", follow_redirects=False).status_code == 303          # login first
+    login(c, "127.0.0.1:8788")
+    r = c.get("/cadangan")
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "data/heroez.db" in names and "data/contracts/1.docx" in names and "config/config.yaml" in names
+    assert not any(n.endswith(("secrets.bin", "master.key", "owner.json")) for n in names)

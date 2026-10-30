@@ -10,7 +10,8 @@ pipeline mirrored to the ops Google Sheet.
 number. See `docs/PHASE0_REPORT.md` for open items.
 
 ## Documents
-- `docs/SETUP_WINDOWS.md` — install on the host PC, Telegram, tunnel, AI, contracts, bot, deals
+- `docs/SETUP_SERVER.md` — **web app on a cloud server** (recommended): server, Cloudflare, Access, install, backups
+- `docs/SETUP_WINDOWS.md` — install on a Windows host PC, Telegram, tunnel, AI, contracts, bot, deals
 - `docs/SETUP_RUNBOOK.md` — Meta app, webhook, coexistence onboarding, tokens, go-live checklist
 - `docs/OPERATIONS.md` — what runs where, modes, automatic behaviour, weekly checks, incidents, costs
 - `docs/ADMIN_GUIDE_ID.md` — for admins (Bahasa Indonesia)

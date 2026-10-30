@@ -92,7 +92,7 @@ dikirim dulu ke supervisor di Telegram dengan tombol ✅ **Kirim** / ❌ **Janga
 Kalau 30 menit tidak disetujui, pesan tidak dikirim dan chat diserahkan ke admin. Kalau kamu membalas lebih dulu,
 balasan bot otomatis dibatalkan. Supervisor bisa mengetik `/bot mati` atau `/bot cek` kapan saja.
 
-## 8. Halaman web (Antrian, Deal, Kontrak)
+## 8. Halaman web (Antrian, Deal, SPK, Kontrak, Nomor)
 
 Buka `https://ops.heroez.id/antrian` dari laptop: masuk dengan kode sekali pakai yang dikirim ke email kantor kamu
 (login diminta lagi setiap hari). Halaman **Antrian** menampilkan chat yang menunggu balasan kamu, dengan tombol
@@ -101,6 +101,21 @@ yang sama seperti di Telegram. Balasnya tetap lewat WhatsApp Web / HP.
 Lunas/Batal hanya supervisor. Isinya juga ada di Google Sheet ops tiap pagi.
 **Kontrak**: pilih template yang sudah disetujui, isi data klien, SOW dan fee → dokumen Word jadi. Pilih deal
 terkait supaya pipeline ikut terisi nilainya. Kontrak dari kertas klien tetap dibuat di luar aplikasi.
+
+**SPK** (satu SPK per talent untuk satu pekerjaan):
+1. **Upload dokumen**: tarik semua file pekerjaan (brief, SOW, PO, rate sheet, deck, screenshot) ke kotak upload,
+   atau tempel teks email/chat. Tekan **Baca dengan AI**.
+2. **Cek tabel SOW**: AI mengisi klien, campaign, periode, termin, dan satu baris per deliverable. Cek semuanya,
+   terutama kotak merah *Perlu dicek*. **Fee klien** masuk ke kontrak brand, **fee talent** masuk ke SPK.
+   Fee talent kosong? Isi sendiri atau pakai kotak *komisi %*. Tekan **Simpan tabel**.
+3. **Buat SPK**: **Isi & buat** membuka formulir SPK yang sudah terisi; lengkapi alamat/rekening talent sekali saja
+   (berikutnya diingat). **Buat semua SPK yang belum ada** membuat sekaligus yang datanya lengkap.
+   **Download semua (ZIP)** untuk dikirim/ditandatangani.
+Nomor SPK otomatis dari penghitung SPK; SPK tidak mengubah nilai deal.
+
+**Nomor**: nomor berikutnya untuk Kontrak, SPK, dll., dan daftar semua nomor yang sudah keluar. Supervisor bisa
+mengatur format, melanjutkan dari nomor terakhir sebelum aplikasi, mencatat nomor yang dipakai di luar aplikasi,
+dan membatalkan nomor (nomor batal tidak dipakai ulang).
 
 ## 9. Kalau bot diam / error
 

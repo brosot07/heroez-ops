@@ -400,6 +400,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 <div><label>Password baru <small>(min. 8)</small></label><input type="password" name="new" required minlength="8"></div></div>
 <label>Ulangi password baru</label><input type="password" name="new2" required minlength="8"><br><br>
 <button class="secondary" type="submit">Ganti password</button></form>
+<p style="margin-top:12px"><a class="btn secondary" href="/cadangan">⬇ Download cadangan (database + dokumen)</a>
+<small class="muted">Simpan di luar server (Google Drive kantor) seminggu sekali. Kunci/token tidak ikut.</small></p>
 <form method="post" action="/test-telegram" style="margin-top:12px"><input type="hidden" name="csrf" value="{self.csrf}">
 <button class="secondary" type="submit">Kirim pesan tes ke semua admin & supervisor</button></form>
 </main></body></html>"""
@@ -560,6 +562,30 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
                 return self.page(f"Belum tersimpan: {e}", ok=False)
             self.request_restart()
             return self.page("Tersimpan. Layanan dimulai ulang; muat ulang halaman ini dalam beberapa detik.")
+
+        @app.get("/cadangan")
+        def backup_download(request: Request):
+            """Owner only: a consistent copy of the database plus documents and settings, to keep off the server.
+            Keys (secrets.bin, master.key) are left out on purpose."""
+            guard(request)
+            import io
+            import zipfile
+            from fastapi.responses import Response
+            with tempfile.TemporaryDirectory() as tmp:
+                db = Path(tmp) / "heroez.db"
+                self.store.backup(db)
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                    z.write(db, "data/heroez.db")
+                    for sub in ("config", "data/templates", "data/contracts", "data/kb", "data/spk"):
+                        base = self.home / sub
+                        for p in sorted(base.rglob("*")) if base.exists() else []:
+                            if p.is_file() and p.suffix != ".bak" and p.name not in ("owner.json",):
+                                z.write(p, str(p.relative_to(self.home)))
+            self.store.audit("owner", "backup_download")
+            name = f"heroez-cadangan-{dt.date.today().isoformat()}.zip"
+            return Response(buf.getvalue(), media_type="application/zip",
+                            headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
         @app.post("/test-telegram", response_class=HTMLResponse)
         async def test(request: Request):

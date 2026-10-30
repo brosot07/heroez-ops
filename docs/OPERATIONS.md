@@ -6,9 +6,9 @@ What runs where, what the app does by itself, and what a person does. Admin-faci
 ## 1. Pieces
 | Piece | Where | Notes |
 |---|---|---|
-| Heroez Ops service | host PC (Windows service, starts with Windows) | one instance; the only machine that stores data |
-| Settings page | host PC only, <http://127.0.0.1:8788>, owner password | mode, people, hours, AI, bot, contracts, deals, Meta |
-| Web pages: Antrian, Deal, Kontrak, Template, Pengetahuan | host PC (same address) **and** other laptops via `https://ops.<domain>/…` behind Cloudflare Access (email code login) | admins: queue, deals, contracts; supervisors also: templates, knowledge, approvals |
+| Heroez Ops service | **web app**: one Docker container on a cloud server (`SETUP_SERVER.md`) · or a Windows host PC (`SETUP_WINDOWS.md`) | one instance; the only machine that stores data |
+| Settings page | web app: `https://opsadmin.<domain>` (owner emails via Cloudflare Access + owner password) · Windows: <http://127.0.0.1:8788> on that PC | mode, people, hours, keys, AI, bot, Access, Meta; **Download cadangan** |
+| Web pages: Antrian, Deal, SPK, Kontrak, Template, Nomor, Pengetahuan | `https://ops.<domain>/…` behind Cloudflare Access (email code login) | admins: queue, deals, SPK, contracts; supervisors also: templates, numbering, knowledge, approvals |
 | Telegram bot | everyone's phone/laptop | reminders, buttons, `/antrian /semua /cari /spam /janji /hapus` |
 | Meta Cloud API (coexistence) | Meta → tunnel → host PC | copies of 1:1 chats and admin replies; bot replies go out through it |
 | Claude API | host PC → Anthropic | message check, bot understanding, reply drafts, template/document reading |
@@ -39,6 +39,7 @@ What runs where, what the app does by itself, and what a person does. Admin-faci
 | Promise due | reminder to the admin, supervisors 2 business hours later if still open |
 | Agreement language in a client message | the assignee is asked on Telegram "Catat sebagai Deal?"; nothing is recorded without the tap |
 | Contract made in the app | linked deal → *Kontrak* with the contract's total |
+| SPK job | documents read by AI into a SOW table → a person checks → one SPK per talent, numbered from the SPK counter; talent details remembered for next time |
 | 09:30 daily | morning list to admins; digest to supervisors/management (response times, pipeline, AI cost, draft acceptance, promises) |
 | Daily after 03:00 | message texts older than 90 days erased; raw payloads older than 7 days deleted; backup to `data\backups` (14 kept); candidates/outcomes pruned |
 | Every ~6 h | Google Calendar and Sheet re-synced (limits: 2 MB / 15 MB, https only, public hosts only) |
