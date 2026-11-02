@@ -124,24 +124,61 @@ class Tunnel:
                 self.proc.kill()
 
 
-def _bind(port: int) -> socket.socket:
+def _bind(port: int, host: str = "127.0.0.1") -> socket.socket:
     """Bind exclusively so another local program cannot take or share the port."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
         s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     else:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("127.0.0.1", port))
+    s.bind((host, port))
     s.listen(128)
     return s
 
 
-def _serve(app, port: int) -> tuple[uvicorn.Server, threading.Thread]:
-    sock = _bind(port)   # raises OSError if the port is taken: the service must not start half-blind
-    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
+def _serve(app, port: int, host: str = "127.0.0.1", proxied: bool = False) -> tuple[uvicorn.Server, threading.Thread]:
+    sock = _bind(port, host)   # raises OSError if the port is taken: the service must not start half-blind
+    # Direct mode: Caddy (same Docker network) terminates HTTPS and sets X-Forwarded-Proto.
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, proxy_headers=proxied,
+                                           forwarded_allow_ips="*" if proxied else None))
     t = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, name=f"http-{port}", daemon=True)
     t.start()
     return server, t
+
+
+def server_settings(home: Path) -> dict:
+    """server.mode (tunnel | direct) and the two addresses, read straight from the file
+    (works even when the rest of the config does not load)."""
+    import yaml
+    try:
+        raw = yaml.safe_load((home / "config" / "config.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:
+        raw = {}
+    srv = raw.get("server") or {}
+    return {"mode": str(srv.get("mode", "tunnel") or "tunnel"),
+            "public": str(srv.get("public_hostname", "") or "").lower(),
+            "settings": str(srv.get("settings_hostname", "") or "").lower()}
+
+
+def host_dispatch(settings_app, public_app, settings_host: str, allowed: set[str]):
+    """Direct mode: one internal port for both addresses. The settings address goes to the settings app,
+    everything else to the public app. /_caddy/ask tells Caddy which names may get a certificate."""
+    async def app(scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            host = headers.get(b"host", b"").decode("latin-1").split(":")[0].lower()
+            if scope.get("path") == "/_caddy/ask":
+                from urllib.parse import parse_qs
+                domain = (parse_qs(scope.get("query_string", b"").decode()).get("domain") or [""])[0].lower()
+                status = 200 if domain and domain in allowed else 404
+                await send({"type": "http.response.start", "status": status, "headers": [(b"content-type", b"text/plain")]})
+                await send({"type": "http.response.body", "body": b"ok" if status == 200 else b"no"})
+                return
+            if settings_host and host == settings_host:
+                return await settings_app(scope, receive, send)
+        target = public_app or settings_app
+        return await target(scope, receive, send)
+    return app
 
 
 def run_once(home: Path, stop: threading.Event) -> None:
@@ -164,8 +201,11 @@ def run_once(home: Path, stop: threading.Event) -> None:
         log.error("config problem, only the settings page is running: %s", e)
         cfg = None
     contracts = ContractsUI(home, store, lambda: cfg) if cfg else None
+    srv = server_settings(home)
+    direct = srv["mode"] == "direct"
+    settings_app = ui.create_app(contracts.router(local=True) if contracts else None)
     try:
-        servers.append(_serve(ui.create_app(contracts.router(local=True) if contracts else None), SETUP_PORT))
+        servers.append(_serve(settings_app, SETUP_PORT))
     except OSError as e:
         log.critical("port %d is taken by another program (%s); stopping so the service restarts cleanly", SETUP_PORT, e)
         raise SystemExit(2) from e
@@ -174,12 +214,18 @@ def run_once(home: Path, stop: threading.Event) -> None:
         for p in service.engine.load_roster():
             log.warning("roster: %s", p)
         try:
-            servers.append(_serve(create_app(cfg, store, service, run_background=True,
-                                             extra_routers=(contracts.router(local=False),)), WEBHOOK_PORT))
+            public_app = create_app(cfg, store, service, run_background=True, extra_routers=(contracts.router(local=False),))
+            if direct:
+                # Reached only by Caddy on the Docker network (no published port); Caddy does HTTPS.
+                app = host_dispatch(settings_app, public_app, srv["settings"], {h for h in (srv["public"], srv["settings"]) if h})
+                servers.append(_serve(app, WEBHOOK_PORT, host="0.0.0.0", proxied=True))
+            else:
+                servers.append(_serve(public_app, WEBHOOK_PORT))
         except OSError as e:
             log.critical("port %d is taken by another program (%s); stopping so the service restarts cleanly", WEBHOOK_PORT, e)
             raise SystemExit(2) from e
-        tunnel.start()   # only after both ports are ours
+        if not direct:
+            tunnel.start()   # only after both ports are ours
         log.info("running in %s mode; settings at http://127.0.0.1:%d", cfg.mode, SETUP_PORT)
 
     while not (restart.is_set() or stop.is_set()):
@@ -207,7 +253,7 @@ def cmd_init(home: Path, answers: dict | None = None) -> int:
     """First start on a server: the only things needed before the settings page can be opened."""
     import yaml
     ask = (lambda k, q: answers.get(k, "")) if answers is not None else (lambda k, q: input(q).strip())
-    token = ask("token", "Cloudflare Tunnel token (Zero Trust → Networks → Tunnels → install command, after --token): ")
+    token = ask("token", "Cloudflare Tunnel token (leave empty for direct mode: domain DNS elsewhere, e.g. Vercel): ")
     public = ask("public", "Public address for webhooks and team pages (e.g. ops.heroez.id): ").removeprefix("https://").strip("/")
     settings = ask("settings", "Address for the settings page (e.g. opsadmin.heroez.id): ").removeprefix("https://").strip("/")
     owner = ask("owner", "Owner email(s) for the settings page, comma separated: ")
@@ -218,6 +264,7 @@ def cmd_init(home: Path, answers: dict | None = None) -> int:
     cfg_path = home / "config" / "config.yaml"
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     srv = raw.setdefault("server", {})
+    srv["mode"] = "tunnel" if token else "direct"
     if public:
         srv["public_hostname"] = public.lower()
     if settings:
@@ -228,7 +275,13 @@ def cmd_init(home: Path, answers: dict | None = None) -> int:
     if not (home / "config" / "owner.json").exists():
         pw = _new_password(home)
         print(f"\nFirst owner password: {pw}\n(it is used once to log in; change it on the settings page afterwards)")
-    print(f"\nDone. Start the app, then open https://{settings or '<settings address>'} in a browser.")
+    if token:
+        print(f"\nDone (Cloudflare Tunnel mode). Start: docker compose -f deploy/docker-compose.yml up -d")
+    else:
+        print(f"\nDone (direct mode). Point DNS A records for {public or '<public address>'} and {settings or '<settings address>'} "
+              f"to this server, open ports 80 and 443, then start:\n"
+              f"  docker compose -f deploy/docker-compose.yml --profile direct up -d")
+    print(f"Then open https://{settings or '<settings address>'} in a browser.")
     return 0
 
 

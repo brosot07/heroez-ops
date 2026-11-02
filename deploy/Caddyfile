@@ -1,0 +1,32 @@
+# Direct mode (domain DNS outside Cloudflare, e.g. on Vercel): Caddy terminates HTTPS with free
+# Let's Encrypt certificates and forwards everything to the app. Certificates are only issued for the
+# addresses the app is configured with (it answers the "ask" check), so nobody can make Caddy request
+# certificates for other names.
+{
+	on_demand_tls {
+		ask http://app:8787/_caddy/ask
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	@internal path /_caddy/*
+	respond @internal 404
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+	request_body {
+		max_size 30MB
+	}
+	reverse_proxy app:8787
+}
+
+http:// {
+	redir https://{host}{uri} permanent
+}

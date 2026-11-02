@@ -106,15 +106,15 @@ def test_admins_cannot_manage_templates(setup, cfg):
     app.include_router(router)
     import heroez_ops.docs_ui as mod
     admin = User("rina@heroez.id", "Rina", "admin", "rina")
-    orig = mod.remote_user
-    mod.remote_user = lambda request, cfg, verifier: admin
+    orig = ui.team_user
+    ui.team_user = lambda request: admin
     try:
         c = TestClient(app)
         assert c.get("/kontrak").status_code == 200
         r = c.post("/template/upload", data={"csrf": ui.csrf, "name": "x"}, files={"file": ("a.docx", sample_contract())})
         assert r.status_code == 403
     finally:
-        mod.remote_user = orig
+        ui.team_user = orig
 
 
 def test_remote_pages_refuse_without_login(setup):
@@ -122,8 +122,9 @@ def test_remote_pages_refuse_without_login(setup):
     app = FastAPI()
     app.include_router(ui.router(local=False))
     c = TestClient(app)
-    r = c.get("/kontrak")
-    assert r.status_code == 403 and "Login belum diatur" in r.text   # Access not configured: default deny
+    r = c.get("/kontrak", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/masuk?next=/kontrak"   # no Access: Telegram-code login first
+    assert c.get("/spk", follow_redirects=False).status_code == 303
 
 
 def test_queue_page_and_actions(setup):
@@ -150,8 +151,8 @@ def test_csrf_token_is_per_user(setup):
     app = _F()
     app.include_router(ui.router(local=False))
     admin = User("rina@heroez.id", "Rina", "admin", "rina")
-    orig = mod.remote_user
-    mod.remote_user = lambda request, cfg, verifier: admin
+    orig = ui.team_user
+    ui.team_user = lambda request: admin
     try:
         c = TestClient(app)
         page = c.get("/kontrak").text
@@ -159,7 +160,7 @@ def test_csrf_token_is_per_user(setup):
         r = c.post("/antrian/aksi", data={"csrf": owner_token, "wa": "x", "aksi": "dibalas"})
         assert r.status_code == 403
     finally:
-        mod.remote_user = orig
+        ui.team_user = orig
 
 
 def test_archived_template_cannot_be_used_for_new_contracts(setup):

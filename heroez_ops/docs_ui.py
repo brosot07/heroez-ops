@@ -30,7 +30,9 @@ from .terbilang import parse_amount, rupiah
 from .ui_common import e, page
 from .owner_auth import COOKIE as OWNER_COOKIE
 from .safety import UnsafeFile, check_zip, content_disposition
-from .webauth import OWNER, AccessVerifier, User, remote_user
+from .webauth import OWNER, AccessVerifier, User, remote_user, user_for_email
+
+TEAM_COOKIE = "hz_team"
 
 _csrf_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("csrf")
 
@@ -66,7 +68,7 @@ class ContractsUI:
 
     # -- CSRF: one token per user (and per owner session), never shared across users ---
     def csrf_for(self, user: User, request: Request | None) -> str:
-        session = request.cookies.get(OWNER_COOKIE, "") if (request is not None and user.role == "owner") else ""
+        session = "" if request is None else request.cookies.get(OWNER_COOKIE if user.role == "owner" else TEAM_COOKIE, "")
         msg = f"{user.role}:{user.key}:{user.email}:{session}".encode()
         return hmac.new(self._csrf_secret, msg, hashlib.sha256).hexdigest()[:32]
 
@@ -84,6 +86,36 @@ class ContractsUI:
             self._verifier = (k, AccessVerifier(*k))
         return self._verifier[1]
 
+    # -- team login without Cloudflare Access: one-time code by Telegram ------------
+    @property
+    def team_login(self):
+        from .codelogin import CodeLogin
+        return CodeLogin(self.store, "team")
+
+    def send_telegram(self, chat_id: int, text: str) -> bool:
+        """Tests replace this. Uses the Heroez bot."""
+        from .alerts.telegram import TelegramAlertChannel
+        token = self.cfg().telegram_bot_token
+        return bool(token) and TelegramAlertChannel(token).send(chat_id, text) is not None
+
+    def telegram_id_of(self, user: User) -> int:
+        c = self.cfg()
+        p = c.admin(user.key) if user.role == "admin" else c.supervisor(user.key)
+        return int(getattr(p, "telegram_id", 0) or 0)
+
+    def team_user(self, request: Request) -> User:
+        """Who is on the team pages: Cloudflare Access when set up, otherwise a Telegram-code session."""
+        v = self.verifier()
+        if v is not None:
+            return remote_user(request, self.cfg(), v)
+        email = self.team_login.session(request.cookies.get(TEAM_COOKIE))
+        user = user_for_email(self.cfg(), email) if email else None
+        if user:
+            return user
+        from urllib.parse import quote
+        nxt = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        raise HTTPException(303, "Silakan masuk.", headers={"Location": f"/masuk?next={quote(nxt)}"})
+
     def router(self, local: bool) -> APIRouter:
         r = APIRouter()
         nav = ([("Antrian", "/antrian"), ("Deal", "/deal"), ("SPK", "/spk"), ("Kontrak", "/kontrak"), ("Template", "/template"),
@@ -92,7 +124,7 @@ class ContractsUI:
                      ("Nomor", "/nomor"), ("Pengetahuan", "/pengetahuan")])
 
         async def who(request: Request) -> User:
-            user = OWNER if local else remote_user(request, self.cfg(), self.verifier())
+            user = OWNER if local else self.team_user(request)
             _csrf_ctx.set(self.csrf_for(user, request))
             return user
 
@@ -103,7 +135,11 @@ class ContractsUI:
             return f
 
         def show(title: str, body: str, user: User, active: str, message: str = "", ok: bool = True) -> HTMLResponse:
-            return HTMLResponse(page(title, body, nav, active, user.name, message, ok, logout=local))
+            return HTMLResponse(page(title, body, nav, active, user.name, message, ok,
+                                     logout=True if local else ("/keluar" if self.verifier() is None else False)))
+
+        if not local:
+            self._login_routes(r)
 
         from . import deals_ui, kb_ui, numbering_ui, spk_ui
         spk_ui.add_routes(r, self, who, form, show)
@@ -349,6 +385,88 @@ class ContractsUI:
                             headers={"Content-Disposition": content_disposition(f"{slug(t['name'])}-asli.docx")})
 
         return r
+
+    # -- login pages (team, without Cloudflare Access) ----------------------------------
+    def _login_routes(self, r: APIRouter) -> None:
+        from urllib.parse import quote
+
+        def safe_next(nxt: str) -> str:
+            return nxt if nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt else "/antrian"
+
+        def login_page(message: str = "", ok: bool = False, nxt: str = "/antrian", email: str = "", step: str = "email") -> HTMLResponse:
+            if step == "code":
+                form_html = (f'<form method="post" action="/masuk/kode"><input type="hidden" name="next" value="{e(nxt)}">'
+                             f'<input type="hidden" name="email" value="{e(email)}">'
+                             f'<label>Kode dari bot Telegram Heroez</label><input type="text" name="code" inputmode="numeric" '
+                             f'autocomplete="one-time-code" maxlength="7" required autofocus placeholder="123456"><br><br>'
+                             f'<button type="submit">Masuk</button></form>'
+                             f'<p class="muted">Kode berlaku 10 menit. Tidak menerima? Pastikan kamu sudah mengirim /start ke bot. '
+                             f'<a href="/masuk?next={quote(nxt)}">Kirim ulang</a></p>')
+            else:
+                form_html = (f'<form method="post" action="/masuk"><input type="hidden" name="next" value="{e(nxt)}">'
+                             f'<label>Email kantor</label><input type="email" name="email" required autofocus value="{e(email)}">'
+                             f'<br><br><button type="submit">Kirim kode ke Telegram</button></form>'
+                             f'<p class="muted">Kode masuk dikirim oleh bot Telegram Heroez ke akunmu.</p>')
+            body = (f'<main style="max-width:420px"><h1>Heroez Ops</h1><div class="card"><h2>Masuk</h2>{form_html}</div></main>')
+            from .ui_common import CSS
+            msg = f'<div class="msg {"ok" if ok else "bad"}">{e(message)}</div>' if message else ""
+            return HTMLResponse(f'<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" '
+                                f'content="width=device-width,initial-scale=1"><title>Masuk · Heroez Ops</title><style>{CSS}</style>'
+                                f'</head><body>{body.replace("<h2>Masuk</h2>", "<h2>Masuk</h2>" + msg, 1)}</body></html>',
+                                headers={"Cache-Control": "no-store"})
+
+        def same_origin(request: Request) -> bool:
+            origin = request.headers.get("origin")
+            return not origin or origin == f"https://{request.headers.get('host', '')}" or origin == f"http://{request.headers.get('host', '')}"
+
+        @r.get("/masuk", response_class=HTMLResponse)
+        def login_get(next: str = "/antrian"):
+            return login_page(nxt=safe_next(next))
+
+        @r.post("/masuk", response_class=HTMLResponse)
+        async def login_send(request: Request):
+            if not same_origin(request):
+                raise HTTPException(403)
+            f = await request.form()
+            email, nxt = str(f.get("email", "")).strip().lower()[:200], safe_next(str(f.get("next", "/antrian")))
+            user = user_for_email(self.cfg(), email) if "@" in email else None
+            chat = self.telegram_id_of(user) if user else 0
+            login = self.team_login
+            if user and chat:
+                code = login.new_code(email)
+                if code is None:
+                    return login_page("Kode baru baru saja dikirim. Tunggu satu menit, lalu coba lagi.", nxt=nxt, email=email, step="code")
+                self.send_telegram(chat, f"🔐 Kode masuk Heroez Ops: <b>{code}</b>\nBerlaku 10 menit. Jangan berikan ke siapa pun.")
+                self.store.audit(user.key, "team_login_code", None, {"email": email})
+            else:
+                self.store.audit(email or "anonymous", "team_login_unknown", None, None)
+            # Same answer whether or not the email is registered.
+            return login_page("Jika email ini terdaftar, kode sudah dikirim ke Telegram-mu.", ok=True, nxt=nxt, email=email, step="code")
+
+        @r.post("/masuk/kode")
+        async def login_code(request: Request):
+            if not same_origin(request):
+                raise HTTPException(403)
+            f = await request.form()
+            email, nxt = str(f.get("email", "")).strip().lower()[:200], safe_next(str(f.get("next", "/antrian")))
+            user = user_for_email(self.cfg(), email) if "@" in email else None
+            login = self.team_login
+            if not user or not login.check_code(email, str(f.get("code", ""))):
+                self.store.audit(email or "anonymous", "team_login_failed", None, None)
+                return login_page("Kode salah atau sudah kedaluwarsa.", nxt=nxt, email=email, step="code")
+            resp = RedirectResponse(nxt, status_code=303)
+            # No max-age: the cookie ends when the browser closes. Host-only, never shared with other subdomains.
+            resp.set_cookie(TEAM_COOKIE, login.new_session(email), httponly=True, samesite="strict", path="/",
+                            secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https")
+            self.store.audit(user.key, "team_login", None, {"email": email})
+            return resp
+
+        @r.get("/keluar")
+        def logout(request: Request):
+            self.team_login.end(request.cookies.get(TEAM_COOKIE))
+            resp = RedirectResponse("/masuk", status_code=303)
+            resp.delete_cookie(TEAM_COOKIE, path="/")
+            return resp
 
     # -- queue ----------------------------------------------------------------------
     def _engine(self):

@@ -70,6 +70,30 @@ class SetupUI:
         return (str(acc.get("team_domain", "") or ""), str(acc.get("audience", "") or ""),
                 [str(m).lower() for m in acc.get("owner_emails") or [] if str(m).strip()])
 
+    def owner_telegram_ids(self) -> list[int]:
+        """Where the second login step's code goes: access.owner_telegram_ids, plus the Telegram ID of any
+        supervisor/admin whose email is an owner email."""
+        raw = self.raw()
+        acc = raw.get("access") or {}
+        ids = [int(x) for x in acc.get("owner_telegram_ids") or [] if str(x).lstrip("-").isdigit() and int(x)]
+        owners = {str(m).lower() for m in acc.get("owner_emails") or []}
+        for p in (raw.get("supervisors") or []) + (raw.get("admins") or []):
+            if str(p.get("email", "")).lower() in owners and int(p.get("telegram_id") or 0):
+                ids.append(int(p["telegram_id"]))
+        return list(dict.fromkeys(ids))
+
+    def send_telegram(self, chat_id: int, text: str) -> bool:
+        """Tests replace this."""
+        token = self.secrets().get("TELEGRAM_BOT_TOKEN")
+        return bool(token) and TelegramAlertChannel(token).send(chat_id, text) is not None
+
+    def needs_second_step(self, request: Request) -> bool:
+        """Settings page opened from the internet without Cloudflare Access: password + Telegram code."""
+        team, aud, owners = self.owner_access()
+        sh = self.settings_host()
+        return bool(sh) and request.headers.get("host", "").lower() == sh and not (team and aud and owners) \
+            and bool(self.owner_telegram_ids())
+
     def remote_gate(self, request: Request) -> HTMLResponse | None:
         """Opened through the public settings address: require a Cloudflare Access login with an owner email
         (when Access is set up). The owner password is asked in addition, always."""
@@ -170,6 +194,8 @@ class SetupUI:
         acc = raw.setdefault("access", {})
         acc["team_domain"] = g("access_team").removeprefix("https://").strip("/")
         acc["audience"] = g("access_aud")
+        if "owner_telegram_ids" in form:
+            acc["owner_telegram_ids"] = [int(x) for x in g("owner_telegram_ids").replace(";", ",").split(",") if x.strip().isdigit()]
         if "owner_emails" in form:
             acc["owner_emails"] = [m.strip().lower() for m in g("owner_emails").replace(";", ",").split(",") if "@" in m]
 
@@ -279,10 +305,13 @@ class SetupUI:
         webhook_url = f"https://{_e(host)}/webhook/meta" if host else "(isi alamat publik dulu)"
         sh = (raw.get("server") or {}).get("settings_hostname", "")
         team, aud, owners = self.owner_access()
-        if sh and not (team and aud and owners):
+        if sh and not (team and aud and owners) and self.owner_telegram_ids():
+            where = (f'<p class="muted">Bisa dibuka di https://{_e(sh)} dengan password pemilik + kode dari bot Telegram '
+                     f'(dikirim ke {len(self.owner_telegram_ids())} akun pemilik).</p>')
+        elif sh and not (team and aud and owners):
             where = (f'<div class="msg bad">⚠️ Halaman ini bisa dibuka dari internet di <b>{_e(sh)}</b> dan saat ini hanya dilindungi password. '
-                     f'Atur Cloudflare Access untuk alamat ini dan isi <b>email pemilik</b> di bagian 8 '
-                     f'(lihat docs/SETUP_SERVER.md).</div>')
+                     f'Isi token bot Telegram dan <b>Telegram ID pemilik</b> di bagian 8 supaya masuk juga butuh kode dari Telegram '
+                     f'(atau atur Cloudflare Access).</div>')
         elif sh:
             where = (f'<p class="muted">Bisa dibuka di https://{_e(sh)} oleh email pemilik '
                      f'({_e(", ".join(owners))}) dengan password.</p>')
@@ -375,6 +404,8 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 <input type="text" name="access_aud" value="{_e((raw.get("access") or {}).get("audience", ""))}">
 <p class="muted">Tanpa ini, halaman Kontrak hanya bisa dibuka dari komputer ini. Halaman kontrak dari laptop lain:
 <code>https://{_e(host) or "alamat-publik"}/kontrak</code></p>
+<label>Telegram ID pemilik <small>(kode masuk halaman Pengaturan dikirim ke sini; pisahkan dengan koma)</small></label>
+<input type="text" name="owner_telegram_ids" value="{_e(", ".join(str(x) for x in (raw.get("access") or {}).get("owner_telegram_ids") or []))}" placeholder="123456789">
 <label>Email pemilik <small>(boleh membuka halaman Pengaturan lewat internet; pisahkan dengan koma)</small></label>
 <input type="text" name="owner_emails" value="{_e(", ".join((raw.get("access") or {}).get("owner_emails") or []))}" placeholder="pemilik@heroez.id">
 <label>Tahap deal <small>(urut, pisahkan dengan koma; "Batal" selalu ada)</small></label>
@@ -454,7 +485,7 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
                 if denied is not None:
                     return denied
             # Password every time: no valid session -> login page (except the login page itself).
-            if request.url.path not in ("/login", "/logout") and not self.owner.valid(request.cookies.get(COOKIE)):
+            if request.url.path not in ("/login", "/logout", "/login/kode") and not self.owner.valid(request.cookies.get(COOKIE)):
                 from urllib.parse import quote
                 return RedirectResponse(f"/login?next={quote(request.url.path)}", status_code=303)
             return await call_next(request)
@@ -497,10 +528,56 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
                 return HTMLResponse(login_page("Terlalu banyak percobaan salah. Coba lagi 5 menit lagi.", nxt), status_code=429)
             elif not self.owner.check_password(pw):
                 return HTMLResponse(login_page("Password salah.", nxt), status_code=401)
+            if self.needs_second_step(request):
+                from .codelogin import CodeLogin
+                second = CodeLogin(self.store, "owner")
+                code = second.new_code("owner")
+                if code is None:
+                    return HTMLResponse(login_page("Kode baru saja dikirim; tunggu satu menit.", nxt), status_code=429)
+                for chat in self.owner_telegram_ids():
+                    self.send_telegram(chat, f"🔐 Kode masuk Pengaturan Heroez Ops: <b>{code}</b>\n"
+                                             "Berlaku 10 menit. Jika bukan kamu yang masuk, segera ganti password.")
+                pending = second.new_session("pending")
+                resp = HTMLResponse(code_page("", nxt))
+                resp.set_cookie("hz_owner_pending", pending, httponly=True, samesite="strict", path="/", secure=True, max_age=600)
+                self.store.audit("owner", "owner_login_code_sent")
+                return resp
             resp = RedirectResponse(nxt, status_code=303)
             # No max-age: the cookie ends when the browser closes.
             resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/",
                             secure=remote(request))
+            return resp
+
+        def code_page(message: str, nxt: str) -> str:
+            msg = f'<div class="msg bad">{_e(message)}</div>' if message else ""
+            return (f'<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" '
+                    f'content="width=device-width,initial-scale=1"><title>Heroez Ops Login</title><style>{CSS}</style></head>'
+                    f'<body><main style="max-width:420px"><h1>Heroez Ops</h1><div class="card"><h2>Kode Telegram</h2>{msg}'
+                    f'<p class="muted">Password benar. Masukkan kode yang baru dikirim bot Heroez ke Telegram pemilik.</p>'
+                    f'<form method="post" action="/login/kode"><input type="hidden" name="csrf" value="{self.csrf}">'
+                    f'<input type="hidden" name="next" value="{_e(nxt)}"><label>Kode</label>'
+                    f'<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required autofocus>'
+                    f'<br><br><button type="submit">Masuk</button></form></div></main></body></html>')
+
+        @app.post("/login/kode")
+        async def login_code(request: Request):
+            form = await form_of(request)
+            nxt = form.get("next", "/")
+            if not nxt.startswith("/") or nxt.startswith("//"):
+                nxt = "/"
+            from .codelogin import CodeLogin
+            second = CodeLogin(self.store, "owner")
+            pending = request.cookies.get("hz_owner_pending")
+            if second.session(pending) != "pending":
+                return RedirectResponse("/login", status_code=303)       # password step first
+            if not second.check_code("owner", form.get("code", "")):
+                self.store.audit("owner", "owner_login_code_failed")
+                return HTMLResponse(code_page("Kode salah atau sudah kedaluwarsa.", nxt), status_code=401)
+            second.end(pending)
+            resp = RedirectResponse(nxt, status_code=303)
+            resp.delete_cookie("hz_owner_pending", path="/")
+            resp.set_cookie(COOKIE, self.owner.new_session(), httponly=True, samesite="strict", path="/", secure=True)
+            self.store.audit("owner", "owner_login_2step")
             return resp
 
         @app.post("/password", response_class=HTMLResponse)

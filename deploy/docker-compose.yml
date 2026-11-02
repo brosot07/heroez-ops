@@ -1,7 +1,8 @@
 # Heroez Ops web app. From the repository folder on the server:
 #   docker compose -f deploy/docker-compose.yml build
 #   docker compose -f deploy/docker-compose.yml run --rm app heroez-ops init     (once)
-#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml up -d                            (Cloudflare Tunnel mode)
+#   docker compose -f deploy/docker-compose.yml --profile direct up -d           (direct mode: DNS elsewhere, e.g. Vercel)
 # Every key (Meta, Telegram, Claude, ...) is then entered on the settings page; there is no .env file.
 name: heroez-ops
 services:
@@ -17,5 +18,19 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+  caddy:
+    # Direct mode only: HTTPS on ports 80/443 with Let's Encrypt, forwarding to the app.
+    profiles: [direct]
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data              # certificates
+      - caddy_config:/config
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 volumes:
   heroez_data:
+  caddy_data:
+  caddy_config:

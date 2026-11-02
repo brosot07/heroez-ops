@@ -34,10 +34,10 @@ def e(v) -> str:
 
 
 def page(title: str, body: str, nav: list[tuple[str, str]] | None = None, active: str = "",
-         who: str = "", message: str = "", ok: bool = True, logout: bool = False) -> str:
+         who: str = "", message: str = "", ok: bool = True, logout: bool | str = False) -> str:
     links = "".join(f'<a href="{href}" class="{"on" if href == active else ""}">{e(label)}</a>' for label, href in nav or [])
     msg = f'<div class="msg {"ok" if ok else "bad"}">{e(message)}</div>' if message else ""
     return (f'<!doctype html><html lang="id"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title>'
-            f'<style>{CSS}</style></head><body><nav><b>Heroez Ops</b>{links}<span class="who">{e(who)}{" · <a href=/logout>Keluar</a>" if logout else ""}</span></nav>'
+            f'<style>{CSS}</style></head><body><nav><b>Heroez Ops</b>{links}<span class="who">{e(who)}{f" · <a href={logout if isinstance(logout, str) else '/logout'}>Keluar</a>" if logout else ""}</span></nav>'
             f'<main>{msg}{body}</main></body></html>')
