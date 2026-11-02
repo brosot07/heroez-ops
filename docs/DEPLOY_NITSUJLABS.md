@@ -29,6 +29,14 @@ Vercel → **Domains** → `nitsujlabs.app` → **DNS Records** → add:
 
 Leave every existing record as it is.
 
+## Shortcut: steps 3 and 4 in one paste
+DigitalOcean → your Droplet → **Access** → **Launch Droplet Console**, then paste and press Enter:
+```bash
+curl -fsSL https://raw.githubusercontent.com/brosot07/heroez-ops/main/deploy/install.sh -o install.sh && bash install.sh
+```
+Wait for **DONE** (about 10 minutes), copy the first password it shows, continue with step 5.
+(If the repository is private, use the manual steps below.)
+
 ## 3. Prepare the server (5 min)
 From your laptop (PowerShell / Terminal):
 ```bash
