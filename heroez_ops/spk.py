@@ -312,3 +312,155 @@ def as_form(spec: dict, values: dict, rows: list[dict]) -> dict:
 def missing_fields(spec: dict, values: dict) -> list[str]:
     return [fd["label"] for fd in spec.get("fields", []) if fd["type"] not in ("money_words", "contract_number")
             and not str(values.get(fd["key"], "") or "").strip()]
+
+
+# ------------------------------------------------------------------ SOW as plain text (copy, fill in, paste back)
+
+SOW_TEMPLATE = """Klien: PT Nama Klien
+Campaign: Nama campaign
+Periode: 10/11/2026 - 30/11/2026
+Termin: 50% di muka, pelunasan 14 hari setelah tayang
+Komisi: 20%
+
+Talent: Nama Talent
+- TikTok | Video 60 detik | 2 | 20/11/2026 | 30jt | 24jt | catatan
+- Instagram | Story 3 frame | 1 | 21/11/2026 | 8jt |  |
+Talent: Nama Talent Lain
+- Instagram | Reels | 1 | 22/11/2026 | 18jt | 15jt | usage 3 bulan
+"""
+SOW_HELP = ("Satu baris per deliverable di bawah nama talent: platform | deliverable | jumlah | tanggal tayang | "
+            "fee klien | fee talent | catatan. Bagian yang tidak diketahui boleh dikosongkan. "
+            "Komisi (opsional) mengisi fee talent yang kosong.")
+
+_MONTHS = {m.lower(): i for i, m in enumerate(
+    ["januari", "februari", "maret", "april", "mei", "juni", "juli", "agustus", "september", "oktober", "november", "desember"], 1)}
+_MONTHS.update({m: i for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"], 1)})
+_MONTHS.update({k[:3]: v for k, v in list(_MONTHS.items())})
+_MONTHS.update({"agu": 8, "okt": 10, "des": 12, "mei": 5})
+_KEYS = {"klien": "client_name", "client": "client_name", "brand": "client_name",
+         "campaign": "campaign", "kampanye": "campaign", "project": "campaign", "proyek": "campaign",
+         "periode": "period", "period": "period", "mulai": "period_start", "start": "period_start",
+         "selesai": "period_end", "end": "period_end", "termin": "payment_terms", "pembayaran": "payment_terms",
+         "payment": "payment_terms", "komisi": "commission_pct", "commission": "commission_pct"}
+
+
+def parse_date_text(text: str, default_year: int | None = None) -> str:
+    """'20/11/2026', '20-11-26', '2026-11-20', '20 Nov 2026', '20 November' → ISO date ('' if not a date)."""
+    t = (text or "").strip().lower().replace(",", " ")
+    if not t:
+        return ""
+    iso = _date(t)
+    if iso:
+        return iso
+    m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?", t)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+    else:
+        m = re.fullmatch(r"(\d{1,2})\s+([a-z]+)\.?(?:\s+(\d{2,4}))?", t)
+        if not m or m.group(2) not in _MONTHS:
+            return ""
+        d, mo, y = int(m.group(1)), _MONTHS[m.group(2)], m.group(3)
+    year = int(y) + (2000 if y and len(y) == 2 else 0) if y else (default_year or dt.date.today().year)
+    try:
+        return dt.date(year, mo, d).isoformat()
+    except ValueError:
+        return ""
+
+
+def parse_sow_text(text: str) -> tuple[dict, list[str]]:
+    """The plain-text SOW → job data (same shape as the AI's), plus problems found, line by line."""
+    from .terbilang import parse_amount
+
+    def money(v: str, where: str) -> int:
+        v = v.strip()
+        if not v or v in ("-", "?"):
+            return 0
+        try:
+            return parse_amount(v)
+        except ValueError:
+            errors.append(f"{where}: nominal “{v}” tidak terbaca (contoh: 30jt atau 30.000.000)")
+            return 0
+
+    data: dict = {"rows": []}
+    errors: list[str] = []
+    talent = ""
+    for n, raw in enumerate((text or "").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, val = line.partition(":")
+        k = key.strip().lower()
+        if sep and not line.startswith(("-", "•", "*")) and "|" not in key:
+            if k in ("talent", "kol", "influencer", "nama talent"):
+                talent = val.strip()[:80]
+                continue
+            field = _KEYS.get(k)
+            if field == "period":
+                parts = re.split(r"\s+(?:-|–|s/d|sd|sampai|to)\s+|\s*[–]\s*", val.strip(), maxsplit=1)
+                start = parse_date_text(parts[0])
+                end = parse_date_text(parts[1], int(start[:4]) if start else None) if len(parts) > 1 else start
+                if not start:
+                    errors.append(f"baris {n}: periode “{val.strip()}” tidak terbaca (contoh: 10/11/2026 - 30/11/2026)")
+                data["period_start"], data["period_end"] = start, end or start
+            elif field in ("period_start", "period_end"):
+                data[field] = parse_date_text(val)
+                if not data[field]:
+                    errors.append(f"baris {n}: tanggal “{val.strip()}” tidak terbaca")
+            elif field == "commission_pct":
+                try:
+                    data["commission_pct"] = float(val.strip().rstrip("%").replace(",", ".") or 0)
+                except ValueError:
+                    errors.append(f"baris {n}: komisi “{val.strip()}” tidak terbaca (contoh: 20%)")
+            elif field:
+                data[field] = val.strip()[:600]
+            continue
+        if "|" in line or line.startswith(("-", "•", "*")):
+            parts = [p.strip() for p in line.lstrip("-•* ").split("|")]
+            row_talent = talent              # always from the "Talent:" line above (never guessed from a column)
+            parts += [""] * (7 - len(parts))
+            platform, deliverable, qty, date, cfee, tfee, notes = parts[:7]
+            where = f"baris {n}"
+            if not row_talent:
+                errors.append(f"{where}: belum ada “Talent: nama” di atas baris ini")
+            posting = parse_date_text(date, int(data.get("period_start", "")[:4]) if data.get("period_start") else None)
+            if date and not posting:
+                errors.append(f"{where}: tanggal “{date}” tidak terbaca")
+            data["rows"].append({"talent": row_talent[:80], "platform": platform[:30], "deliverable": deliverable[:120],
+                                 "qty": int(qty) if qty.isdigit() and int(qty) > 0 else 1, "posting_date": posting,
+                                 "client_fee": money(cfee, where), "talent_fee": money(tfee, where), "notes": notes[:200]})
+            continue
+        errors.append(f"baris {n}: tidak dipahami: “{line[:60]}”")
+    if data.get("commission_pct") is not None:
+        apply_commission(data["rows"], data["commission_pct"])
+    return data, errors
+
+
+def looks_like_sow_text(text: str) -> bool:
+    t = (text or "").lower()
+    return bool(re.search(r"^\s*talent\s*:", t, re.M)) and "|" in t
+
+
+def to_sow_text(data: dict) -> str:
+    """Job data → the same plain-text format (to copy into WhatsApp, edit, paste back)."""
+    def d(iso: str) -> str:
+        return dt.date.fromisoformat(iso).strftime("%d/%m/%Y") if iso else ""
+
+    def m(v) -> str:
+        return f"{int(v):,}".replace(",", ".") if v else ""
+    lines = [f"Klien: {data.get('client_name', '')}", f"Campaign: {data.get('campaign', '')}"]
+    if data.get("period_start"):
+        lines.append(f"Periode: {d(data['period_start'])} - {d(data.get('period_end') or data['period_start'])}")
+    else:
+        lines.append("Periode: ")
+    lines.append(f"Termin: {data.get('payment_terms', '')}")
+    if data.get("commission_pct") not in (None, ""):
+        lines.append(f"Komisi: {data['commission_pct']:g}%")
+    for t in talents_of(data.get("rows", [])):
+        lines += ["", f"Talent: {t}"]
+        for r in data["rows"]:
+            if (r.get("talent") or "").lower() == t.lower():
+                lines.append("- " + " | ".join([r.get("platform", ""), r.get("deliverable", ""), str(r.get("qty") or 1),
+                                               d(r.get("posting_date", "")), m(r.get("client_fee")), m(r.get("talent_fee")),
+                                               r.get("notes", "")]).rstrip(" |"))
+    return "\n".join(lines) + "\n"

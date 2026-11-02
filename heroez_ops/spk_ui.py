@@ -28,7 +28,11 @@ STYLE = """<style>
 .tl{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
 .tl:last-child{border-bottom:0}.pill{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--line)}
 .pill.ok{border-color:var(--ok);color:var(--ok)}.pill.bad{border-color:var(--bad);color:var(--bad)}
-</style>"""
+pre.sow{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;font-size:13px;margin:8px 0}
+details summary{cursor:pointer;font-weight:600}
+</style>
+<script>function copyText(id,btn){const el=document.getElementById(id);const t=el.value!==undefined?el.value:el.textContent;
+navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent="✓ Disalin";setTimeout(()=>btn.textContent=o,1500)})}</script>"""
 ACCEPT = ".pdf,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.webp,.txt"
 
 
@@ -98,7 +102,11 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                f'<label class="drop" id="drop"><input type="file" name="files" id="files" multiple accept="{ACCEPT}" hidden>'
                f'<b>⬆ Tarik file ke sini</b><span class="muted">atau klik untuk memilih · PDF, Word, Excel, PowerPoint, CSV, '
                f'gambar · maks. {spk.MAX_FILES} file, total 25 MB</span><ul class="files" id="flist"></ul></label>'
-               f'<label>Atau tempel teks <small>(email / chat WhatsApp / catatan)</small></label>'
+               f'<details style="margin-top:14px"><summary>📋 Tanpa file: isi format teks SOW (bisa diisi di WhatsApp / Notes)</summary>'
+               f'<p class="muted">{e(spk.SOW_HELP)} Teks dengan format ini langsung masuk ke tabel, tanpa AI.</p>'
+               f'<pre class="sow" id="sowtpl">{e(spk.SOW_TEMPLATE)}</pre>'
+               f'<button type="button" class="secondary" onclick="copyText(\'sowtpl\',this)">Salin format</button></details>'
+               f'<label>Atau tempel teks <small>(format SOW di atas, atau email / chat WhatsApp / catatan)</small></label>'
                f'<textarea name="text" rows="5" placeholder="Halo kak, untuk campaign serum Glowskin kami mau ambil Dewi 2 TikTok tayang 20 Nov ..."></textarea>'
                f'<div class="row"><div><label>Nama pekerjaan <small>(opsional)</small></label>'
                f'<input type="text" name="title" placeholder="Glowskin – launch serum Nov 2026"></div>'
@@ -146,7 +154,7 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
             return (f'{STYLE}<h1>{e(j["title"])}</h1>{steps(0)}{note_html}<p>{retry}</p>'
                     f'<p class="muted">Atau isi tabelnya manual:</p>' + editor(jid, data, csrf, files))
         return (f'{STYLE}<h1>{e(j["title"])}</h1>{steps(1 if not docs_of(jid) else 2)}{note_html}'
-                + editor(jid, data, csrf, files) + f'<p>{retry}</p>' + generate(jid, data, csrf))
+                + editor(jid, data, csrf, files) + text_card(jid, data, csrf) + f'<p>{retry}</p>' + generate(jid, data, csrf))
 
     def editor(jid: int, data: dict, csrf: str, files: list[str]) -> str:
         rows = data.get("rows") or []
@@ -189,6 +197,16 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
                 f'<br><br><button type="submit">Simpan tabel</button>'
                 f'<script>let n={len(rows or [{}, {}])};const tpl={json.dumps(tpl_row)};'
                 f'function addRow(){{document.querySelector("#sow tbody").insertAdjacentHTML("beforeend",tpl.replaceAll("__I__",n++));}}</script></form>')
+
+    def text_card(jid: int, data: dict, csrf: str) -> str:
+        """The same SOW as plain text: copy it into WhatsApp, edit it there, paste it back."""
+        return (f'<details class="card"><summary>📋 SOW sebagai teks (salin ke WhatsApp, ubah, tempel kembali)</summary>'
+                f'<form method="post" action="/spk/{jid}/teks">{csrf}'
+                f'<p class="muted">{e(spk.SOW_HELP)}</p>'
+                f'<textarea name="sow_text" id="sowtext" rows="14" style="font-family:monospace">{e(spk.to_sow_text(data))}</textarea><br><br>'
+                f'<button type="button" class="secondary" onclick="copyText(\'sowtext\',this)">Salin teks</button> '
+                f'<button type="submit">Terapkan teks ke tabel</button>'
+                f'<span class="muted"> · mengganti isi tabel di atas</span></form></details>')
 
     def generate(jid: int, data: dict, csrf: str) -> str:
         talents = spk.talents_of(data.get("rows") or [])
@@ -285,6 +303,15 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         if text:
             (d / "_teks.txt").write_text(text[:100_000], encoding="utf-8")
         ui.store.audit(user.key, "spk_job_new", None, {"job": jid, "files": len(datas)})
+        if text and not datas and spk.looks_like_sow_text(text):
+            # Filled-in SOW text format: read it directly, no AI needed.
+            data, problems = spk.parse_sow_text(text)
+            ui.store.x("UPDATE spk_jobs SET status='review', data=?, notes=?, updated_at=? WHERE id=?",
+                       (json.dumps(data, ensure_ascii=False), json.dumps(problems, ensure_ascii=False), int(time.time()), jid))
+            if not str(f.get("title") or "").strip() and data.get("client_name"):
+                ui.store.x("UPDATE spk_jobs SET title=? WHERE id=?",
+                           (" – ".join(x for x in (data.get("client_name"), data.get("campaign")) if x)[:120], jid))
+            return RedirectResponse(f"/spk/{jid}", status_code=303)
         start_reading(jid)
         return RedirectResponse(f"/spk/{jid}", status_code=303)
 
@@ -349,6 +376,24 @@ def add_routes(r: APIRouter, ui, who, form, show) -> None:
         msg = "Tersimpan." + (f" {filled} fee talent diisi dari komisi {pct}%." if filled else "") + \
               (" Periksa: " + "; ".join(problems) if problems else "")
         from urllib.parse import quote
+        return RedirectResponse(f"/spk/{jid}?msg={quote(msg)}&ok={int(not problems)}", status_code=303)
+
+    @r.post("/spk/{jid}/teks")
+    async def spk_from_text(jid: int, request: Request):
+        user = await who(request)
+        f = await form(request)
+        j = job_row(jid)
+        data, problems = spk.parse_sow_text(str(f.get("sow_text") or ""))
+        from urllib.parse import quote
+        if not data["rows"] and problems:
+            return RedirectResponse(f"/spk/{jid}?msg={quote('Teks tidak dipakai: ' + '; '.join(problems[:5]))}&ok=0", status_code=303)
+        old = json.loads(j["data"] or "{}")
+        for k in ("client_name", "campaign", "period_start", "period_end", "payment_terms"):
+            data.setdefault(k, old.get(k, ""))
+        ui.store.x("UPDATE spk_jobs SET data=?, status='review', updated_at=? WHERE id=?",
+                   (json.dumps(data, ensure_ascii=False), int(time.time()), jid))
+        ui.store.audit(user.key, "spk_job_text", None, {"job": jid, "rows": len(data["rows"])})
+        msg = f"Tabel diisi dari teks: {len(data['rows'])} baris." + (" Periksa: " + "; ".join(problems[:5]) if problems else "")
         return RedirectResponse(f"/spk/{jid}?msg={quote(msg)}&ok={int(not problems)}", status_code=303)
 
     @r.post("/spk/{jid}/buat")

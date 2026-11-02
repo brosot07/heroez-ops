@@ -194,3 +194,53 @@ def test_without_ai_key_the_table_is_filled_by_hand(app):
     jid = new_job(ui, client)
     j = ui.store.one("SELECT * FROM spk_jobs WHERE id=?", (jid,))
     assert j["status"] == "review" and "isi tabel di bawah secara manual" in j["notes"]
+
+
+SOW_TEXT = """Klien: PT Glowskin Indonesia
+Campaign: Glowskin Serum Launch
+Periode: 10 Nov 2026 - 30 Nov 2026
+Termin: 50% di muka, pelunasan 14 hari setelah tayang
+Komisi: 20%
+
+Talent: Dewi Lestari
+- TikTok | Video 60 detik | 2 | 20/11/2026 | 30jt |  | hook 3 detik pertama
+Talent: Raka Pratama
+- Instagram | Reels | 1 | 22-11-26 | Rp18.000.000 | 15jt
+"""
+
+
+def test_sow_text_round_trip_and_problems():
+    data, problems = spk.parse_sow_text(SOW_TEXT)
+    assert problems == []
+    assert (data["client_name"], data["period_start"], data["period_end"]) == ("PT Glowskin Indonesia", "2026-11-10", "2026-11-30")
+    dewi, raka = data["rows"]
+    assert (dewi["qty"], dewi["posting_date"], dewi["client_fee"], dewi["talent_fee"]) == (2, "2026-11-20", 30_000_000, 24_000_000)
+    assert dewi["notes"] == "hook 3 detik pertama"
+    assert (raka["posting_date"], raka["client_fee"], raka["talent_fee"]) == ("2026-11-22", 18_000_000, 15_000_000)
+    again, _ = spk.parse_sow_text(spk.to_sow_text(data))
+    assert again["rows"] == data["rows"] and again["period_end"] == "2026-11-30"
+    bad, problems = spk.parse_sow_text("Klien: X\n- TikTok | Video | 1 | besok | tigapuluh\nhalo\n")
+    assert len(problems) == 4                        # no talent, bad date, bad fee, unknown line
+    assert any("Talent: nama" in p for p in problems) and any("tigapuluh" in p for p in problems)
+
+
+def test_pasted_sow_text_skips_the_ai_and_can_be_edited_as_text(app):
+    ui, client, tid = app
+    ui.spk_analyzer = lambda *a: (_ for _ in ()).throw(AssertionError("AI must not be called"))
+    assert "Salin format" in client.get("/spk").text
+    r = client.post("/spk/baru", data={"csrf": ui.csrf, "text": SOW_TEXT}, follow_redirects=False)
+    jid = int(r.headers["location"].rsplit("/", 1)[1])
+    j = ui.store.one("SELECT * FROM spk_jobs WHERE id=?", (jid,))
+    assert j["status"] == "review" and j["title"] == "PT Glowskin Indonesia – Glowskin Serum Launch"
+    page = client.get(f"/spk/{jid}").text
+    assert 'value="24.000.000"' in page and "SOW sebagai teks" in page and "Talent: Raka Pratama" in page
+    # Edit as text: add Sinta, change Raka's fee
+    text = SOW_TEXT.replace("Rp18.000.000 | 15jt", "20jt | 16jt") + "Talent: Sinta\n- Instagram | Story | 1 | 24/11/2026 | 8jt | 6jt\n"
+    r = client.post(f"/spk/{jid}/teks", data={"csrf": ui.csrf, "sow_text": text}, follow_redirects=False)
+    assert "3%20baris" in r.headers["location"] or "3 baris" in r.headers["location"]
+    rows = json.loads(ui.store.one("SELECT data FROM spk_jobs WHERE id=?", (jid,))["data"])["rows"]
+    assert [x["talent"] for x in rows] == ["Dewi Lestari", "Raka Pratama", "Sinta"] and rows[1]["client_fee"] == 20_000_000
+    # Garbage text does not wipe the table
+    r = client.post(f"/spk/{jid}/teks", data={"csrf": ui.csrf, "sow_text": "asdf"}, follow_redirects=False)
+    assert "ok=0" in r.headers["location"]
+    assert len(json.loads(ui.store.one("SELECT data FROM spk_jobs WHERE id=?", (jid,))["data"])["rows"]) == 3
