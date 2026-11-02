@@ -68,3 +68,14 @@ def test_shipped_default_config_matches_the_repo_config():
     root = Path(__file__).resolve().parent.parent
     assert (root / "heroez_ops" / "defaults" / "config.yaml").read_text(encoding="utf-8") == \
         (root / "config" / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_privacy_and_data_deletion_pages_are_public(cfg, tmp_path):
+    from fastapi.testclient import TestClient
+    from heroez_ops.app import create_app
+    from heroez_ops.db import Store
+    c = TestClient(create_app(cfg, Store(":memory:"), run_background=False))
+    for path, text in (("/privasi", "Kebijakan Privasi"), ("/privacy", "English summary"), ("/hapus-data", "Hapus data"),
+                       ("/data-deletion", "Delete data")):
+        r = c.get(path)
+        assert r.status_code == 200 and text in r.text

@@ -73,6 +73,8 @@ def create_app(cfg: Config | None = None, store: Store | None = None, service: S
     app.state.service, app.state.store, app.state.cfg = service, store, cfg
     for router in extra_routers:
         app.include_router(router)
+    from . import legal_pages
+    app.include_router(legal_pages.router())       # public: privacy policy and data deletion (Meta requires them)
 
     @app.get("/webhook/meta")
     def meta_verify(request: Request):
