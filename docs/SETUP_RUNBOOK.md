@@ -37,23 +37,14 @@ WhatsApp Business app on it, and about an hour.
    check *Webhook fields* in the coexistence docs).
 
 ## 4. Connect the existing number (coexistence onboarding)
-1. *WhatsApp → API Setup* (or *Getting started*). Do **not** use the test number for production.
-2. Choose **Add phone number → Connect an existing WhatsApp Business app number** (the *Embedded Signup* flow with
-   *coexistence*; the docs call it *onboarding business app users*). Follow the flow on the Meta page:
-   business details → scan the **QR code** with the WhatsApp Business app on the phone (Settings → Linked devices →
-   Link a device, or the prompt the flow shows) → accept the terms about broadcast lists and disappearing messages.
-3. When it finishes, the number shows under *Phone numbers* with a **Phone number ID**. Copy it → Heroez Ops settings
-   page section 9 → *Phone number ID* → Simpan.
-4. The phone app shows the number as connected to Meta (the *Meta Business* banner under Settings → Business tools).
+⚠️ Do **not** use *WhatsApp → API Setup → Add phone number*: that moves the number off the WhatsApp Business app.
+Coexistence only works through Meta's **Embedded Signup** flow, which the Heroez settings page runs for you:
+follow **`docs/CONNECT_WHATSAPP.md`** (Meta app, Facebook Login for Business configuration, webhook, then the
+**Hubungkan WhatsApp Business** button and a QR scan on the phone).
 
-## 5. Permanent access token (needed only for the Phase 2 bot replies)
-1. Business settings (<https://business.facebook.com/settings>) → *Users → System users* → **Add** → name `heroez-ops`,
-   role *Admin* is not needed: *Employee* is enough.
-2. *Assign assets*: the Heroez Ops app with **Develop app** (or *Manage app*), and the **WhatsApp account** (WABA) with
-   *Manage* / *Message* permissions.
-3. **Generate new token** → app `Heroez Ops` → expiry *Never* → permissions **whatsapp_business_messaging** and
-   **whatsapp_business_management** → copy the token once → settings page section 9 → *Meta access token* → Simpan.
-4. Without this token the app still receives everything and sends reminders; only the bot replies (Phase 2) are off.
+## 5. Access token
+No system-user token is needed: the signup flow gives the server a business token automatically and stores it
+encrypted. (A system-user token pasted in section 9 still works and overrides it.)
 
 ## 6. Check that messages arrive
 1. From another phone, send a WhatsApp message to the Heroez number. Within a minute the settings page status shows

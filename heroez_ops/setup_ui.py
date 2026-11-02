@@ -82,6 +82,73 @@ class SetupUI:
                 ids.append(int(p["telegram_id"]))
         return list(dict.fromkeys(ids))
 
+    def wa_connector(self, *args):
+        """Tests replace this."""
+        from . import wa_connect
+        return wa_connect.connect(*args)
+
+    def whatsapp_page(self) -> str:
+        raw, sec = self.raw(), self.secrets()
+        wa = raw.get("whatsapp") or {}
+        app_id, conf = str(wa.get("app_id", "") or ""), str(wa.get("signup_config_id", "") or "")
+        version = str(wa.get("graph_api_version", "v23.0") or "v23.0")
+        missing = [label for ok, label in ((app_id, "Meta App ID"), (conf, "Configuration ID"),
+                                           (sec.get("META_APP_SECRET"), "Meta App Secret")) if not ok]
+        connected = wa.get("waba_id") and sec.get("META_ACCESS_TOKEN")
+        head = (f'<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" '
+                f'content="width=device-width,initial-scale=1"><title>Hubungkan WhatsApp</title><style>{CSS}</style></head>'
+                f'<body><nav><b>Heroez Ops</b><a href="/">← Pengaturan</a></nav><main><h1>Hubungkan WhatsApp Business</h1>')
+        if missing:
+            return head + (f'<div class="msg bad">Isi dulu di Pengaturan bagian 9: <b>{_e(", ".join(missing))}</b>. '
+                           f'Langkahnya ada di docs/CONNECT_WHATSAPP.md.</div></main></body></html>')
+        status = (f'<div class="msg ok">Sudah tersambung: nomor {_e(wa.get("business_number", ""))} '
+                  f'(akun {_e(wa.get("waba_id"))}). Menyambung ulang aman.</div>' if connected else "")
+        return head + status + f"""
+<div class="card"><h2>Sebelum mulai</h2><ul>
+<li>Pegang HP dengan <b>WhatsApp Business</b> Heroez (versi terbaru), terhubung internet.</li>
+<li>Nomor tetap dipakai di HP seperti biasa. Perangkat tertaut (WhatsApp Web) akan terputus sekali dan perlu disambung lagi.</li>
+<li>Saat ditanya, <b>izinkan berbagi riwayat chat</b> supaya sistem langsung tahu chat yang belum dibalas.</li>
+</ul></div>
+<div class="card"><h2>Langkah</h2>
+<p>1. Klik tombol di bawah. Jendela Meta terbuka: login Facebook, pilih bisnis <b>Heroez</b>, pilih
+<b>"Connect your existing WhatsApp Business app"</b>, masukkan nomor Heroez, lalu pindai kode QR di aplikasi WhatsApp Business
+(Pengaturan → Perangkat tertaut / atau mengikuti petunjuk di layar).</p>
+<p>2. Setelah jendela Meta selesai, tunggu di halaman ini sampai muncul ✅.</p>
+<button id="go" type="button">📱 Hubungkan WhatsApp Business</button>
+<div id="out" style="margin-top:16px"></div></div>
+<script>
+const CSRF={json.dumps(self.csrf)}, APP_ID={json.dumps(app_id)}, CONFIG_ID={json.dumps(conf)}, VER={json.dumps(version)};
+let info={{}};
+window.addEventListener("message",(ev)=>{{
+  if(!/(^|\.)facebook\.com$/.test(new URL(ev.origin).hostname)) return;
+  try{{const d=JSON.parse(ev.data); if(d.type==="WA_EMBEDDED_SIGNUP"){{
+    if(d.data&&d.data.waba_id) info=d.data;
+    if(d.event==="CANCEL") show("Dibatalkan di langkah: "+(d.data&&d.data.current_step||"-"),false);
+    if(d.event==="ERROR") show("Meta melaporkan error: "+(d.data&&d.data.error_message||"-"),false);
+  }}}}catch(e){{}}
+}});
+function show(t,ok){{const o=document.getElementById("out");o.className="msg "+(ok?"ok":"bad");o.textContent=t;}}
+window.fbAsyncInit=function(){{FB.init({{appId:APP_ID,autoLogAppEvents:true,xfbml:false,version:VER}});}};
+async function finish(code){{
+  for(let i=0;i<20&&!info.waba_id;i++) await new Promise(r=>setTimeout(r,300));
+  show("Menyambungkan… (± 10 detik)",true);
+  const body=new URLSearchParams({{csrf:CSRF,code:code,waba_id:info.waba_id||"",phone_number_id:info.phone_number_id||""}});
+  const r=await fetch("/whatsapp/selesai",{{method:"POST",body:body,headers:{{"Content-Type":"application/x-www-form-urlencoded"}}}});
+  const j=await r.json().catch(()=>({{ok:false,error:"Jawaban server tidak terbaca"}}));
+  if(j.ok){{show("✅ Tersambung: "+(j.name||"")+" "+(j.number||"")+". Langkah: "+JSON.stringify(j.steps)+". Sistem dimulai ulang; buka Pengaturan lagi dalam 15 detik.",true);}}
+  else show("❌ "+j.error,false);
+}}
+document.getElementById("go").onclick=()=>{{
+  if(!window.FB){{show("SDK Meta belum termuat. Matikan pemblokir iklan untuk halaman ini, lalu muat ulang.",false);return;}}
+  FB.login((resp)=>{{ if(resp.authResponse&&resp.authResponse.code) finish(resp.authResponse.code);
+                      else show("Jendela Meta ditutup sebelum selesai.",false); }},
+    {{config_id:CONFIG_ID,response_type:"code",override_default_response_type:true,
+      extras:{{setup:{{}},featureType:"whatsapp_business_app_onboarding",sessionInfoVersion:"3"}}}});
+}};
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+</main></body></html>"""
+
     def send_telegram(self, chat_id: int, text: str) -> bool:
         """Tests replace this."""
         token = self.secrets().get("TELEGRAM_BOT_TOKEN")
@@ -187,6 +254,9 @@ class SetupUI:
         if g("send_budget").isdigit():
             b["monthly_send_budget"] = int(g("send_budget"))
         raw.setdefault("whatsapp", {})["phone_number_id"] = "".join(ch for ch in g("phone_number_id") if ch.isdigit())
+        for k in ("app_id", "signup_config_id"):
+            if k in form:
+                raw["whatsapp"][k] = "".join(ch for ch in g(k) if ch.isdigit())
         dl = raw.setdefault("deals", {})
         dl["sheet_webhook_url"] = g("deals_sheet_url")
         if g("deal_stages"):
@@ -417,7 +487,12 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
 <div class="card"><h2>9. WhatsApp & koneksi</h2>
 <label>Nomor WhatsApp Heroez <small>(dengan kode negara, mis. 62812…)</small></label><input type="text" name="business_number" value="{_e((raw.get("whatsapp") or {}).get("business_number", ""))}">
 <label>Meta App Secret <small>· {has("META_APP_SECRET")}</small></label><input type="password" name="meta_app_secret" autocomplete="off">
-<label>Phone number ID <small>(Meta app → WhatsApp → API Setup; untuk bot)</small></label><input type="text" name="phone_number_id" value="{_e((raw.get("whatsapp") or {}).get("phone_number_id", ""))}">
+<div class="row"><div><label>Meta App ID <small>(developers.facebook.com → app Anda → App ID)</small></label>
+<input type="text" name="app_id" value="{_e((raw.get("whatsapp") or {}).get("app_id", ""))}"></div>
+<div><label>Configuration ID <small>(Facebook Login for Business → Configurations)</small></label>
+<input type="text" name="signup_config_id" value="{_e((raw.get("whatsapp") or {}).get("signup_config_id", ""))}"></div></div>
+<p><a class="btn secondary" href="/whatsapp">📱 Hubungkan WhatsApp Business (tetap jalan di HP)</a></p>
+<label>Phone number ID <small>(terisi otomatis setelah “Hubungkan WhatsApp Business”)</small></label><input type="text" name="phone_number_id" value="{_e((raw.get("whatsapp") or {}).get("phone_number_id", ""))}">
 <label>Meta access token <small>(System user token, permanen · {has("META_ACCESS_TOKEN")})</small></label><input type="password" name="meta_access_token" autocomplete="off">
 <label>Alamat publik <small>(hostname Cloudflare Tunnel, mis. ops.heroez.id)</small></label><input type="text" name="public_hostname" value="{_e(host)}">
 <label>Alamat halaman Pengaturan <small>(hanya versi server/web app, mis. opsadmin.heroez.id; kosong = hanya dari komputer ini)</small></label>
@@ -663,6 +738,42 @@ Tiap pesan bot dihitung: gratis dari Meta sampai 1.000 per bulan.</p>
             name = f"heroez-cadangan-{dt.date.today().isoformat()}.zip"
             return Response(buf.getvalue(), media_type="application/zip",
                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+        @app.get("/whatsapp", response_class=HTMLResponse)
+        def whatsapp_page(request: Request):
+            guard(request)
+            return HTMLResponse(self.whatsapp_page())
+
+        @app.post("/whatsapp/selesai")
+        async def whatsapp_done(request: Request):
+            """Called by the signup page with Meta's one-time code. Owner only (session + CSRF)."""
+            guard(request)
+            form = await form_of(request)
+            from fastapi.responses import JSONResponse
+            from . import wa_connect
+            raw, sec = self.raw(), self.secrets()
+            wa = raw.get("whatsapp") or {}
+            waba = "".join(ch for ch in form.get("waba_id", "") if ch.isdigit())
+            phone = "".join(ch for ch in form.get("phone_number_id", "") if ch.isdigit())
+            if not (form.get("code") and waba and wa.get("app_id") and sec.get("META_APP_SECRET")):
+                return JSONResponse({"ok": False, "error": "Data dari Meta tidak lengkap, atau App ID / App Secret belum diisi."}, 400)
+            try:
+                res = self.wa_connector(form["code"], str(wa["app_id"]), sec["META_APP_SECRET"], waba, phone,
+                                        str(wa.get("graph_api_version", "v23.0") or "v23.0"))
+            except wa_connect.ConnectError as e:
+                self.store.audit("owner", "whatsapp_connect_failed", None, {"error": str(e)[:300]})
+                return JSONResponse({"ok": False, "error": str(e)}, 502)
+            raw.setdefault("whatsapp", {}).update({"waba_id": res["waba_id"], "phone_number_id": res["phone_number_id"]})
+            if res["business_number"]:
+                raw["whatsapp"]["business_number"] = res["business_number"]
+            sec["META_ACCESS_TOKEN"] = res["token"]
+            try:
+                self.save(raw, sec)
+            except ConfigError as e:
+                return JSONResponse({"ok": False, "error": f"Tersambung, tapi pengaturan tidak tersimpan: {e}"}, 500)
+            self.store.audit("owner", "whatsapp_connected", None, {"waba": res["waba_id"], "steps": res["steps"]})
+            self.request_restart()
+            return JSONResponse({"ok": True, "number": res["business_number"], "name": res["verified_name"], "steps": res["steps"]})
 
         @app.post("/test-telegram", response_class=HTMLResponse)
         async def test(request: Request):
