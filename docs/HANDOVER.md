@@ -23,6 +23,16 @@ number, using **Meta's official Cloud API in coexistence mode** (no unofficial W
 | Documents | Contracts and **SPK** from lawyer-approved Word templates (AI marks the variable fields once, a person approves); SPK page reads dropped documents into a SOW table → one SPK per talent; per-type numbering with a register |
 | Web pages | Antrian, Deal, SPK, Kontrak, Template, Nomor, Pengetahuan (team, via Cloudflare Access) + Pengaturan (owner) |
 
+### Two ways to put it online
+| | Tunnel mode (`SETUP_SERVER.md`) | Direct mode (`DEPLOY_NITSUJLABS.md`) |
+|---|---|---|
+| Domain DNS | on Cloudflare | anywhere (e.g. Vercel) — two A records |
+| HTTPS | Cloudflare Tunnel (no open ports) | Caddy + Let's Encrypt (ports 80/443) |
+| Team login | Cloudflare Access (email code) | Telegram bot code to the person's Telegram |
+| Settings login | Access owner email + owner password | owner password + Telegram code |
+
+The current plan is **direct mode on heroez.nitsujlabs.app** (DNS stays on Vercel).
+
 ## 2. Architecture
 
 ```

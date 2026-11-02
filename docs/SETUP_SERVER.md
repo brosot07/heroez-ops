@@ -10,6 +10,10 @@ stored encrypted on the server.
 Time needed: about 1 hour, once. You need: the Heroez domain, a Cloudflare account, and an SSH client
 (Windows Terminal / PowerShell has `ssh` built in).
 
+**Domain DNS not on Cloudflare** (e.g. kept on Vercel)? Use **direct mode** instead of the tunnel: Caddy gets the
+HTTPS certificates and people log in with a code from the Telegram bot. Step by step, with real values:
+`docs/DEPLOY_NITSUJLABS.md`.
+
 ---
 
 ## 1. Rent the server
