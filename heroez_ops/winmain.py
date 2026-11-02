@@ -227,6 +227,15 @@ def run_once(home: Path, stop: threading.Event) -> None:
         if not direct:
             tunnel.start()   # only after both ports are ours
         log.info("running in %s mode; settings at http://127.0.0.1:%d", cfg.mode, SETUP_PORT)
+    elif direct:
+        # The config does not load (e.g. a bad value was saved): keep the settings page reachable from the
+        # internet so the owner can fix it; everything else waits until the config is valid again.
+        try:
+            app = host_dispatch(settings_app, None, srv["settings"], {h for h in (srv["public"], srv["settings"]) if h})
+            servers.append(_serve(app, WEBHOOK_PORT, host="0.0.0.0", proxied=True))
+        except OSError as e:
+            log.critical("port %d is taken by another program (%s); stopping so the service restarts cleanly", WEBHOOK_PORT, e)
+            raise SystemExit(2) from e
 
     while not (restart.is_set() or stop.is_set()):
         restart.wait(1)
