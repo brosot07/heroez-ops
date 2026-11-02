@@ -144,3 +144,9 @@ def test_without_owner_telegram_id_the_page_warns(tmp_path):
     r = c.post("/login", data={"csrf": ui.csrf, "password": "rahasia-123", "next": "/"}, follow_redirects=False)
     assert r.status_code == 303 and sent == []                                  # password only…
     assert "Telegram ID pemilik" in c.get("/").text and "hanya dilindungi password" in c.get("/").text   # …and a warning
+
+
+def test_bare_address_opens_the_queue(cfg, tmp_path):
+    ui, c, sent = team_app(cfg, tmp_path)
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/antrian"

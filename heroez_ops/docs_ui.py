@@ -141,6 +141,10 @@ class ContractsUI:
         if not local:
             self._login_routes(r)
 
+            @r.get("/", include_in_schema=False)
+            def home():
+                return RedirectResponse("/antrian", status_code=303)
+
         from . import deals_ui, kb_ui, numbering_ui, spk_ui
         spk_ui.add_routes(r, self, who, form, show)
         kb_ui.add_routes(r, self, who, form, show)
